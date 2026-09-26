@@ -48,7 +48,11 @@ class MaskedTemporalEncoder(nn.Module):
         expected = (len(self.cells), sequence.shape[0], sequence.shape[2])
         if states is None:
             states = sequence.new_zeros(expected)
-        elif states.shape != expected or states.dtype != sequence.dtype or states.device != sequence.device:
+        elif (
+            states.shape != expected
+            or states.dtype != sequence.dtype
+            or states.device != sequence.device
+        ):
             raise ValueError("chunk states must match [2,N,D], dtype and device")
         layer_states = list(states.unbind(0))
         outputs = []
@@ -94,6 +98,7 @@ class TemporalIncidenceEncoder(nn.Module):
         self.strip_phase = strip_phase
         self.checkpoint_blocks = checkpoint_blocks
         self.actor_projection = nn.Sequential(nn.Linear(ACTOR_FEATURE_DIM, width), nn.GELU())
+        self.actor_temporal = MaskedTemporalEncoder(width)
         self.half_edge = nn.Sequential(
             nn.Linear(2 * width + 6 * PHASE_FEATURE_DIM + 3, width),
             nn.GELU(),
@@ -212,6 +217,10 @@ class TemporalIncidenceEncoder(nn.Module):
         actor_mask = torch.tensor(field.actor_patch_mask.copy(), device=device)
         hidden = self.actor_projection(actor_values)
         hidden = torch.where(actor_mask[..., None], hidden, torch.zeros_like(hidden))
+        # Preserve each actor's own history before forming endpoint-bound
+        # relations. A field spans one capture; no set pooling or window reset
+        # is inserted between local patches along a consistent actor track.
+        hidden, _ = self.actor_temporal(hidden, actor_mask)
         shape = (field.actor_count, field.patch_count, self.width)
         total = torch.zeros(shape, dtype=torch.float64, device=device)
         second = torch.zeros_like(total)
@@ -308,7 +317,9 @@ class CalibratedCoordinationScore(nn.Module):
             raise ValueError("initial_temperature must be positive")
         if not math.isfinite(initial_mixture) or not 0 < initial_mixture < 1:
             raise ValueError("initial_mixture must be strictly between zero and one")
-        self.mixture_logit = nn.Parameter(torch.tensor(math.log(initial_mixture / (1 - initial_mixture))))
+        self.mixture_logit = nn.Parameter(
+            torch.tensor(math.log(initial_mixture / (1 - initial_mixture)))
+        )
         self.log_scale = nn.Parameter(torch.tensor(math.log(1 / initial_temperature)))
 
     def forward(

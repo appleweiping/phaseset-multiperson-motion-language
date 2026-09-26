@@ -32,7 +32,7 @@ These are analytic mechanism checks, not motion-language retrieval results.
 
 No real native-data training, human relational challenge, sealed-test scores,
 paper aggregate or scientific acceptance is implied. Whole-capture actor/edge
-state orchestration, long-capture halo convolution, relation-packet integration
+state host orchestration, disk-backed response streaming, relation-packet integration
 with the host runner, and legitimate literature adaptations remain to finish.
 The prior exact-commit CI and anonymous-codeload receipts retain their original
 scope and are not relabeled as verification of this new revision.
@@ -49,3 +49,18 @@ deployed anywhere; the actual data license and grant must be respected.
 The [SMPL-X model instructions](https://github.com/vchoutas/smplx#downloading-the-model)
 require registration and the model license. A Python package or pytest fixture
 with a model-like filename is not the licensed body-model asset.
+
+## Capture-core follow-up, 2026-09-26
+
+Shared two-layer actor temporal states now precede half-edge construction;
+actor histories are not pooled or reset between local patches in one field.
+Morlet convolution uses complete kernel halos around each central response
+block (default 1024 frames), computing each response once. The resulting
+complete response cache still has an explicit 1 GiB limit: this is bounded
+temporary convolution, **not** a completed disk-streaming host.
+
+The updated modules passed server CPU checks: **70 passed, 1 CUDA-only skip**
+in 13.64 seconds, including chunk lengths 1/7/31/64 versus unchunked responses,
+gap-mask equality, actor-state continuity, K=2 exact-zero regression, and the
+legacy signal/Morlet tests. Before/after source snapshots are identical.
+This is software qualification; formal V2 training remains 0/87.

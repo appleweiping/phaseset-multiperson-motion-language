@@ -87,7 +87,9 @@ def test_handoff_fold_components_are_exact_disjoint_and_bound_to_87_stage_matrix
     assert components["pilot_train"] == ["C01", "C02"]
     assert components["pilot_validation"] == components["fold_validation"] == ["C03"]
     assert [row["held_out"] for row in components["folds"]] == [
-        ["C00", "C06", "C10", "C14"], ["C04", "C07", "C12"], ["C05", "C08", "C13"]
+        ["C00", "C06", "C10", "C14"],
+        ["C04", "C07", "C12"],
+        ["C05", "C08", "C13"],
     ]
     sealed = set(matrix["primary_split"]["sealed_test_component_labels"])
     assert sealed == {"C09", "C11", "C15"}
@@ -133,6 +135,55 @@ def test_endpoint_exchange_is_complex_conjugation_with_energy_swap():
     np.testing.assert_allclose(reversed_values[..., 1], -values.features[..., 1], atol=0)
     np.testing.assert_array_equal(reversed_values[..., 3], values.features[..., 4])
     np.testing.assert_array_equal(reversed_values[..., 4], values.features[..., 3])
+
+
+@pytest.mark.parametrize("chunk_frames", [1, 7, 31, 64])
+def test_halo_convolution_matches_unchunked_responses_and_gap_masks(chunk_frames):
+    batch = motion()
+    coordinates, tracked = np.array(batch.skeletons), np.array(batch.track_mask)
+    tracked[0, 1, 63:67] = False
+    coordinates[0, 1, 63:67] = 0.0
+    batch = PreparedGroupBatch(
+        coordinates,
+        batch.actor_mask.copy(),
+        batch.frame_mask.copy(),
+        tracked,
+        batch.actor_commitments,
+        batch.group_commitments,
+    )
+    reference = field(batch, config=LocalPhaseConfig(convolution_chunk_frames=1000))
+    candidate = field(batch, config=LocalPhaseConfig(convolution_chunk_frames=chunk_frames))
+    for left, right in zip(reference.responses, candidate.responses, strict=True):
+        np.testing.assert_array_equal(left, right)
+    for left, right in zip(reference.response_masks, candidate.response_masks, strict=True):
+        np.testing.assert_array_equal(left, right)
+    assert not candidate.response_masks[0][1].all()
+    np.testing.assert_array_equal(
+        local_pair_chunk(reference, 0, 3).features,
+        local_pair_chunk(candidate, 0, 3).features,
+    )
+
+
+def test_actor_temporal_history_is_encoded_before_incident_messages():
+    torch.manual_seed(31415)
+    model = TemporalIncidenceEncoder(8)
+    source = field()
+    captured = []
+    handle = model.actor_temporal.register_forward_hook(
+        lambda module, inputs, output: captured.append((inputs, output))
+    )
+    try:
+        model(source)
+    finally:
+        handle.remove()
+    assert len(captured) == 1
+    (values, mask), (outputs, final) = captured[0]
+    whole, whole_states = model.actor_temporal.encode_chunk(values, mask)
+    first, carried = model.actor_temporal.encode_chunk(values[:, :3], mask[:, :3])
+    tail, carried = model.actor_temporal.encode_chunk(values[:, 3:], mask[:, 3:], carried)
+    assert torch.equal(outputs, torch.cat((first, tail), dim=1))
+    assert torch.equal(outputs, whole) and torch.equal(final, whole_states[-1])
+    assert torch.equal(carried, whole_states)
 
 
 def test_stationary_motion_has_unobservable_phase_and_observed_support():

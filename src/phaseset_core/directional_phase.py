@@ -30,9 +30,16 @@ class LocalPhaseConfig:
     epsilon: float = 1e-12
     edge_budget: int = 32_768
     max_response_bytes: int = 1_073_741_824
+    convolution_chunk_frames: int = 1024
 
     def __post_init__(self) -> None:
-        for name in ("patch_frames", "hop_frames", "edge_budget", "max_response_bytes"):
+        for name in (
+            "patch_frames",
+            "hop_frames",
+            "edge_budget",
+            "max_response_bytes",
+            "convolution_chunk_frames",
+        ):
             if type(getattr(self, name)) is not int or getattr(self, name) < 1:
                 raise ValueError(f"{name} must be a positive integer")
         if not math.isfinite(self.epsilon) or self.epsilon <= 0:
@@ -154,13 +161,27 @@ def directional_phase_fields(
                 valid = np.zeros(transformed.shape, dtype=np.bool_)
                 positions = np.zeros(0, dtype=np.float64)
             else:
-                windows = np.lib.stride_tricks.sliding_window_view(values, band.length, axis=1)
-                mask_windows = np.lib.stride_tricks.sliding_window_view(masks, band.length, axis=1)
-                valid = mask_windows.all(axis=-1).reshape(count, -1, 22, 3)
-                transformed = np.einsum("ktcl,l->ktc", windows, band.kernel).reshape(
-                    count, -1, 22, 3
-                )
-                transformed = np.where(valid, transformed, 0.0 + 0.0j)
+                response_count = length - band.length + 1
+                transformed = np.zeros((count, response_count, 22, 3), dtype=np.complex128)
+                valid = np.zeros(transformed.shape, dtype=np.bool_)
+                # Each central response is written once. The input extends by
+                # kernel_length-1 past the response block: full physical halo,
+                # never independent chunk convolution or a shortened kernel.
+                for start in range(0, response_count, config.convolution_chunk_frames):
+                    stop = min(response_count, start + config.convolution_chunk_frames)
+                    halo_stop = stop + band.length - 1
+                    windows = np.lib.stride_tricks.sliding_window_view(
+                        values[:, start:halo_stop], band.length, axis=1
+                    )
+                    mask_windows = np.lib.stride_tricks.sliding_window_view(
+                        masks[:, start:halo_stop], band.length, axis=1
+                    )
+                    local_valid = mask_windows.all(axis=-1).reshape(count, stop - start, 22, 3)
+                    local_values = np.einsum("ktcl,l->ktc", windows, band.kernel).reshape(
+                        count, stop - start, 22, 3
+                    )
+                    valid[:, start:stop] = local_valid
+                    transformed[:, start:stop] = np.where(local_valid, local_values, 0.0 + 0.0j)
                 positions = np.arange(length - band.length + 1) + (band.length - 1) / 2
             responses.append(_readonly(np.ascontiguousarray(transformed)))
             response_masks.append(_readonly(np.ascontiguousarray(valid)))

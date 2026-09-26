@@ -1,5 +1,10 @@
 # PhaseSet frozen research contract
 
+> Historical V1 contract. Signed local phase, temporal incidence, calibrated
+> scoring, counterfactual supervision, and the formal census are amended by
+> [PhaseSet-V2](PHASESET_V2_AMENDMENT.md). The original contract and code remain
+> preserved; V2 has no real-data result or scientific acceptance yet.
+
 **Contract ID:** `phaseset-multiperson-20260825`
 **Frozen at:** 2026-08-25 20:43:38 +08:00
 **Target:** ICASSP 2027, Multimedia Signal Processing primary topic

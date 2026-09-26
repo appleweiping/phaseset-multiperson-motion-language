@@ -40,7 +40,24 @@ multi-person skeleton sequence
   [20-Hz rate contract](docs/PHASESET_20HZ_MORLET_CONTRACT.md) and
   [canonical-byte portability policy](docs/MORLET_PORTABILITY.md).
 
-## Current milestone
+## PhaseSet-V2 research upgrade — 2026-09-26
+
+The new [V2 amendment](docs/PHASESET_V2_AMENDMENT.md) introduces signed local
+phase, time-varying actor–edge incidence, chronological capture readout, and
+verified counterfactual coordination supervision. The
+[87-stage matrix](configs/phaseset_v2_experiment_matrix.json) supersedes the
+affected legacy 33-run plan. New modules are independent research APIs; the
+formal V2 host runner and literature reproductions are not yet implemented.
+
+[Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
+records 117 focused CPU tests and one full-width CUDA forward/backward witness.
+There are still **0/87 formal V2 stages** and no native-data retrieval result.
+Missing approved main data, licensed body-model assets, exact handoff fold
+assignments, and human relational verification are explicit dependencies.
+The descriptions and score equation below document the preserved V1 core,
+not completed V2 experiments or a submission-ready paper.
+
+## Preserved V1 milestone
 
 This source snapshot declares `v0.2.1`, the portable-verification patch for the
 stable data-free multi-person core and execution-contract milestone. It is a

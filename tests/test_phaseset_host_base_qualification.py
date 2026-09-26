@@ -210,6 +210,115 @@ def _patch_pre_latency(monkeypatch: pytest.MonkeyPatch) -> tuple[object, object]
     )
     real_timer_preflight = controller._validate_formal_latency_timer_support
     real_timer_timeout = controller._formal_latency_timeout
+    journal_writers: dict[Path, object] = {}
+
+    class PortableJournalWriter:
+        """Exercise the real journal schema/state machine without POSIX dir-fd I/O."""
+
+        _EVENT_METHODS = {
+            "session_start": "SESSION_START",
+            "context_ready": "CONTEXT_READY",
+            "visit_started": "VISIT_START",
+            "warmup_completed": "WARMUP_COMPLETED",
+            "timed_sample_completed": "TIMED_SAMPLE_COMPLETED",
+            "visit_ended": "VISIT_END",
+            "terminal": "TERMINAL",
+        }
+
+        def __init__(
+            self,
+            path: Path,
+            session_id: str,
+            bindings: journal.LatencyJournalBindings,
+        ) -> None:
+            self.path = path
+            self.session_id = session_id
+            self.bindings = bindings
+            self.records: list[journal.LatencyJournalRecord] = []
+            self.state = journal._JournalState()
+            self.previous_sha256 = journal.ZERO_SHA256
+            self.closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _type, _value, _traceback) -> None:
+            self.closed = True
+
+        def __getattr__(self, name: str):
+            try:
+                event_type = self._EVENT_METHODS[name]
+            except KeyError as error:
+                raise AttributeError(name) from error
+
+            def append(**payload: object) -> journal.LatencyJournalRecord:
+                if self.closed or len(self.records) >= journal.MAX_EVENTS:
+                    raise journal.LatencyJournalWriteError(
+                        "portable structural journal is closed or exhausted"
+                    )
+                if event_type == "SESSION_START":
+                    # The real writer injects its own admitted bindings here;
+                    # session_start callers do not provide this field.
+                    payload["bindings"] = self.bindings.payload()
+                sequence = len(self.records)
+                next_state = self.state.transition(event_type, payload)
+                raw = journal._canonical_json_bytes(
+                    journal._event_payload(
+                        sequence=sequence,
+                        session_id=self.session_id,
+                        event_type=event_type,
+                        previous_event_sha256=self.previous_sha256,
+                        binding_sha256=self.bindings.sha256,
+                        recorded_unix_ns=sequence + 1,
+                        payload=payload,
+                    )
+                )
+                event_sha256 = _digest(raw)
+                record = journal.LatencyJournalRecord(
+                    sequence=sequence,
+                    event_type=event_type,
+                    previous_event_sha256=self.previous_sha256,
+                    binding_sha256=self.bindings.sha256,
+                    raw=raw,
+                    marker_raw=journal._completion_marker_raw(sequence, event_sha256),
+                )
+                self.records.append(record)
+                self.state = next_state
+                self.previous_sha256 = event_sha256
+                return record
+
+            return append
+
+    def portable_create_journal(
+        parent: Path,
+        *,
+        session_id: str,
+        bindings: journal.LatencyJournalBindings,
+        **_ignored: object,
+    ) -> PortableJournalWriter:
+        path = parent / session_id
+        path.mkdir(mode=0o700, exist_ok=False)
+        writer = PortableJournalWriter(path, session_id, bindings)
+        journal_writers[path.resolve()] = writer
+        return writer
+
+    def portable_read_journal(
+        path: Path,
+        *,
+        expected_bindings: journal.LatencyJournalBindings,
+    ) -> journal.LatencyJournalReadResult:
+        writer = journal_writers.get(path.resolve())
+        if writer is None or writer.bindings != expected_bindings:
+            raise journal.LatencyJournalError(
+                "portable structural journal binding is unavailable"
+            )
+        return journal._read_result(
+            session_id=writer.session_id,
+            bindings=writer.bindings,
+            records=writer.records,
+            tail=(),
+            terminal_outcome=writer.state.terminal_outcome,
+        )
 
     def portable_timer_preflight(**_ignored: object) -> None:
         real_timer_preflight(
@@ -250,6 +359,16 @@ def _patch_pre_latency(monkeypatch: pytest.MonkeyPatch) -> tuple[object, object]
         portable_timer_preflight,
     )
     monkeypatch.setattr(controller, "_formal_latency_timeout", portable_timer_timeout)
+    monkeypatch.setattr(
+        controller.journal_module,
+        "create_latency_progress_journal",
+        portable_create_journal,
+    )
+    monkeypatch.setattr(
+        controller.journal_module,
+        "read_latency_progress_journal",
+        portable_read_journal,
+    )
     return cohort, scored
 
 

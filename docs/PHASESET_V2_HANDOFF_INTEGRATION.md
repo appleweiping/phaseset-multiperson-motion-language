@@ -100,3 +100,17 @@ not the full-corpus training host, disk-backed cache/backward scheduling,
 training-only floor fit, literature baselines or scientific experiments.
 The response cache still enforces its 1 GiB RAM limit without sampling actors
 or edges. Formal training remains **0/87**.
+
+## Updated CUDA mechanism witness, 2026-09-26
+
+The same continuous-capture source passed a fresh server-only 512D, three-actor
+CUDA forward/backward check: **1 passed in 11.30 s**, NVIDIA RTX A6000, peak
+allocated **206,455,808 bytes**, reserved **249,561,088 bytes**. Admission
+required observed device use below 500 MiB; the allocator was bounded to 2 GiB.
+Source snapshots match and the final attempt exit is zero. This supersedes no
+earlier receipt: the earlier peaks above belong to their earlier source.
+
+The witness uses an analytic input and no optimizer or retrieval scores. It
+does not qualify full-corpus training, establish accuracy, or count as one of
+the 87 formal stages. Actual development body-model conversion is a separate
+private server job; final-test captures are excluded from that conversion.

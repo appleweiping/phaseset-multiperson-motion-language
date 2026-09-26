@@ -111,6 +111,29 @@ The licensed native qualification now also covers one complete four-person
 63.55 seconds on server CPU. No trained scores or captions were consumed.
 The entire main-corpus conversion, calibration and training are not implied.
 
+## Full native main-corpus input audit, 2026-09-26
+
+Server-only inspection of both complete licensed motion archives passed in
+339.93 seconds: **572 captures, 2,261 native actor records and 15,827 selected
+NPY members**. Every selected member was CRC-checked, and all seven native
+tracks were validated for exact dimensions/frame counts, binary tracking masks
+and observed finite/float32-representable values. This is an input audit, not
+SMPL-X conversion or model evaluation of the full corpus.
+
+The original participant-disjoint universe remains **400/96/76**. The frozen
+nonoverlapping ten-second rule accepts **4,894/1,276/1,055** windows and rejects
+**18/11/2** in train/validation/test. One test capture has no accepted complete
+window; no motion is padded, repeated or borrowed to keep it. After additionally
+requiring the existing human holistic description, the confirmatory task has
+**398/96/75** eligible captures. Exclusions precede all model scores; there is
+no split reassignment. Original K counts, 545 four-person and 27 three-person,
+describe the universe, not an assertion of task-eligible K subgroup counts.
+
+Caption semantics and retrieval scores were not inspected. Full development
+body-model conversion, training-only calibration, baselines and scientific
+evaluation remain separate stages; input-audit success is not scientific
+acceptance.
+
 ## Access and license gates not implemented in code
 
 - Embody data access is not established by this adapter. The official repository says a user

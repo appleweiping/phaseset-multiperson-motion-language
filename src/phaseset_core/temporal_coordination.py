@@ -26,25 +26,43 @@ from .objectives import variable_positive_symmetric_infonce
 
 
 class MaskedTemporalEncoder(nn.Module):
-    """Missing positions neither update state nor create a biased output."""
+    """Two shared temporal layers; missing positions do not update either state.
+
+    ``encode_chunk`` carries both layers across ordered chunks of one track.
+    Reset its state for a different capture or a declared track discontinuity.
+    """
 
     def __init__(self, width: int) -> None:
         super().__init__()
-        self.cell = nn.GRUCell(width, width)
+        self.cells = nn.ModuleList([nn.GRUCell(width, width), nn.GRUCell(width, width)])
 
     def forward(self, sequence: Tensor, mask: Tensor) -> tuple[Tensor, Tensor]:
+        outputs, states = self.encode_chunk(sequence, mask)
+        return outputs, states[-1]
+
+    def encode_chunk(
+        self, sequence: Tensor, mask: Tensor, states: Tensor | None = None
+    ) -> tuple[Tensor, Tensor]:
         if sequence.ndim != 3 or mask.shape != sequence.shape[:2] or mask.dtype != torch.bool:
             raise ValueError("temporal inputs require [N,P,D] and bool[N,P]")
-        state = sequence.new_zeros((sequence.shape[0], sequence.shape[2]))
+        expected = (len(self.cells), sequence.shape[0], sequence.shape[2])
+        if states is None:
+            states = sequence.new_zeros(expected)
+        elif states.shape != expected or states.dtype != sequence.dtype or states.device != sequence.device:
+            raise ValueError("chunk states must match [2,N,D], dtype and device")
+        layer_states = list(states.unbind(0))
         outputs = []
         for position in range(sequence.shape[1]):
             valid = mask[:, position, None]
-            proposal = self.cell(sequence[:, position], state)
-            state = torch.where(valid, proposal, state)
-            outputs.append(torch.where(valid, state, torch.zeros_like(state)))
+            value = sequence[:, position]
+            for layer, cell in enumerate(self.cells):
+                proposal = cell(value, layer_states[layer])
+                layer_states[layer] = torch.where(valid, proposal, layer_states[layer])
+                value = layer_states[layer]
+            outputs.append(torch.where(valid, value, torch.zeros_like(value)))
         if not outputs:
             raise ValueError("temporal sequence is empty")
-        return torch.stack(outputs, dim=1), state
+        return torch.stack(outputs, dim=1), torch.stack(layer_states)
 
 
 @dataclass(frozen=True)
@@ -284,20 +302,36 @@ class OrderedCaptureReadout(nn.Module):
 class CalibratedCoordinationScore(nn.Module):
     """Blend both branches as cosines on one learned similarity scale."""
 
-    def __init__(self, initial_temperature: float = 0.07) -> None:
+    def __init__(self, initial_temperature: float = 0.07, initial_mixture: float = 0.1) -> None:
         super().__init__()
         if not math.isfinite(initial_temperature) or initial_temperature <= 0:
             raise ValueError("initial_temperature must be positive")
-        self.mixture_logit = nn.Parameter(torch.tensor(0.0))
+        if not math.isfinite(initial_mixture) or not 0 < initial_mixture < 1:
+            raise ValueError("initial_mixture must be strictly between zero and one")
+        self.mixture_logit = nn.Parameter(torch.tensor(math.log(initial_mixture / (1 - initial_mixture))))
         self.log_scale = nn.Parameter(torch.tensor(math.log(1 / initial_temperature)))
 
-    def forward(self, global_cosine: Tensor, coordination_cosine: Tensor) -> Tensor:
+    def forward(
+        self,
+        global_cosine: Tensor,
+        coordination_cosine: Tensor,
+        *,
+        coordination_support: Tensor | None = None,
+    ) -> Tensor:
         if global_cosine.shape != coordination_cosine.shape:
             raise ValueError("both cosine score matrices must have the same shape")
         for value in (global_cosine, coordination_cosine):
             if not bool(torch.isfinite(value).all()) or bool((value.abs() > 1.00001).any()):
                 raise ValueError("calibration consumes cosines, not temperature-scaled logits")
         alpha = self.mixture_logit.sigmoid()
+        if coordination_support is not None:
+            if coordination_support.dtype != torch.bool:
+                raise ValueError("coordination_support must be boolean")
+            if coordination_support.shape == global_cosine.shape[:1] and global_cosine.ndim == 2:
+                coordination_support = coordination_support[:, None]
+            elif coordination_support.shape != global_cosine.shape:
+                raise ValueError("coordination_support must match scores or the motion row axis")
+            alpha = torch.where(coordination_support, alpha, torch.zeros_like(alpha))
         scale = self.log_scale.clamp(math.log(1e-3), math.log(100)).exp()
         return scale * ((1 - alpha) * global_cosine + alpha * coordination_cosine)
 

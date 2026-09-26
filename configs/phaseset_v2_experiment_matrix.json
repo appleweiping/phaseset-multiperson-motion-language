@@ -17,16 +17,47 @@
     "max_root_cause_restarts": 3,
     "base_max_epochs": 30,
     "residual_max_epochs": 20,
-    "pilot_hyperparameter_adjustments": 1
+    "pilot_hyperparameter_adjustments": 1,
+    "pilot_max_formal_step_fraction": 0.2,
+    "allowed_uniform_epoch_expansion": {"base": 60, "residual": 40},
+    "epoch_expansion_must_precede_formal_freeze": true
   },
   "primary_split": {
     "train_captures": 400,
     "validation_captures": 96,
     "test_captures": 76,
-    "final_test_components": 3
+    "final_test_components": 3,
+    "validation_component_labels": ["C00"],
+    "sealed_test_component_labels": ["C09", "C11", "C15"]
   },
-  "pilot_and_group_fold_components": null,
-  "group_fold_components_source": "Referenced ChatGPT handoff archive; attachment not yet available",
+  "pilot_and_group_fold_components": {
+    "pilot_train": ["C01", "C02"],
+    "pilot_validation": ["C03"],
+    "development": ["C00", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C10", "C12", "C13", "C14"],
+    "fold_validation": ["C03"],
+    "folds": [
+      {"id": "fold_0", "run_split": "group_fold_1", "held_out": ["C00", "C06", "C10", "C14"], "train": ["C01", "C02", "C04", "C05", "C07", "C08", "C12", "C13"]},
+      {"id": "fold_1", "run_split": "group_fold_2", "held_out": ["C04", "C07", "C12"], "train": ["C00", "C01", "C02", "C05", "C06", "C08", "C10", "C13", "C14"]},
+      {"id": "fold_2", "run_split": "group_fold_3", "held_out": ["C05", "C08", "C13"], "train": ["C00", "C01", "C02", "C04", "C06", "C07", "C10", "C12", "C14"]}
+    ],
+    "reuse_main_checkpoints": false
+  },
+  "group_fold_components_source": "User-supplied PhaseSet_Codex_Handoff_2026-09-26.md, section 5.2",
+  "pilot_allocation": {"TMR-Set": 3, "WaMo-Set": 3, "MIME-Set": 3, "B2": 1, "PhaseSet-V2-head": 2},
+  "mechanism_contract": {
+    "residual_base": "B2",
+    "temporal_layers": 2,
+    "width": 512,
+    "local_statistics_frames": 40,
+    "hop_frames": 20,
+    "initial_relation_mixture": 0.1,
+    "no_periodic_support": "global_branch_fallback",
+    "head_parameter_relative_tolerance": 0.05,
+    "dummy_capacity_parameters": false,
+    "dct_mean_signal": "(a+b)/2",
+    "dct_difference_signal": "a-b",
+    "capture_temporal_state": "consistent_actor_and_edge_tracks_before_set_readout"
+  },
   "frozen_strong_baseline": null,
   "success_thresholds": {
     "retrieval_mean_r1_gain_pp": 2,

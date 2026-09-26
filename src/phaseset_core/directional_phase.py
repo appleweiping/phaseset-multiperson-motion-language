@@ -297,4 +297,4 @@ def mean_difference_signal_dct(left: np.ndarray, right: np.ndarray) -> tuple[np.
         np.pi / length * (np.arange(length) + 0.5)[None, :] * np.arange(length)[:, None]
     ) * math.sqrt(2.0 / length)
     basis[0] /= math.sqrt(2.0)
-    return basis @ ((left + right) / 2), basis @ ((left - right) / 2)
+    return basis @ ((left + right) / 2), basis @ (left - right)

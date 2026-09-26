@@ -39,10 +39,14 @@ A6对平均与差分信号先做DCT，保留交叉项；不以端点自功率平
 seeds为1729/2718/31415。base最多30epoch、residual最多20epoch；
 最多12短pilot、两轮结构返工、全局三次有根因的故障重启，
 正式启动最多90，总保护预算300 GPU-hours。先profile代表性任务，再冻结
-max_steps；pilot只允许一次有依据的统一超参调整。达到限制后交付真实终态。
+max_steps；每个pilot不超过对应正式阶段20%的optimizer steps。
+默认pilot为三个文献家族各3次、B2一次、V2 head两次，总计12次。
+只允许冻结前一次有依据的统一调整；epoch可统一扩大至base60/residual40，
+但仍受300 GPU-hours和已冻结max_steps约束。达到限制后交付真实终态。
 
 性能比较保留文献原架构及辅助损失的合理多人适配；机制比较固定B2、
-文本来源及相近有效容量。TMR普通双塔不能替代完整TMR，WaMo功率头不能
+文本来源及相近有效容量（head参数默认差异不超过5%，不计无用dummy参数）。
+TMR普通双塔不能替代完整TMR，WaMo功率头不能
 替代原方法，MIME多人适配及收敛情况须明确。外折独立训练，权重不跨折复用。
 Inter-X如在其训练集训练，只能称外部双人适用性验证。
 
@@ -52,8 +56,12 @@ A8无反事实目标、A9只校准旧表示。每一贡献必须有对应可推�
 
 ## 数据和科学验收
 
-保留400/96/76原split及三个最终test组件。具体pilot/三外折组件来自
-聊天交付包；目前该附件未传入，配置保留null且不得启动正式矩阵。
+保留400/96/76原split，主validation为C00，最终test封存C09/C11/C15。
+用户提供的`PhaseSet_Codex_Handoff_2026-09-26.md`已接入：pilot训练C01/C02、
+验证C03；fold0留出C00/C06/C10/C14，fold1留出C04/C07/C12，
+fold2留出C05/C08/C13。各折训练开发组件中除C03及本折held-out的所有组件，
+checkpoint selection统一C03，不复用主实验checkpoint。
+冻结强对手B*只能按pilot验证从TMR-Set/WaMo-Set/MIME-Set选择。
 没有观察到真实数据时，不执行正式训练或生成主表数字。
 
 真实关系挑战至少200核实最小文本对、100capture、8参与者组件，
@@ -76,8 +84,12 @@ BLOCKED_DATA/RIGHTS/RUNTIME/RELATIONAL_EVIDENCE/BUDGET或FAILED_IMPLEMENTATION�
 两个新模块实现固定物理前端、checkpointed时间incidence、
 有序capture读出、共同尺度评分和核实负例损失。它们作为独立研究API，
 尚未接入现有host正式训练、文献适配或数据标注。
-默认40帧patch/20帧hop及关系GRU是待交付包核对的实现起点，
-不作为已冻结的最终超参。新前端的训练能量阈值需重新拟合；
+handoff确认40帧统计/20帧hop，低频核支持约4秒，不能声称1秒精确定位。
+起始时间编码为两层512D；两层状态可跨chunk连续，但host层的整capture
+actor/edge轨迹、halo卷积和关系packet读出尚待接入，不能以窗口embedding
+的有序读出冒充它们。评分起始alpha=0.1，无周期支持时显式回退global。
+本次精确组件配置不等于pilot超参已冻结或正式矩阵可启动。
+新前端的训练能量阈值需重新拟合；
 旧五速度通道阈值不能直接套用。机制检查使用分析运动，不产生检索成绩。
 
 正文与图表最终来自同一冻结aggregate，提供可编辑源、真实限制和失败案例。

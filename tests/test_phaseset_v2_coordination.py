@@ -6,6 +6,7 @@ import copy
 import itertools
 import json
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -28,6 +29,7 @@ from phaseset_core.directional_phase import (
 from phaseset_core.periodic import ResourceLimitError
 from phaseset_core.temporal_coordination import (
     CalibratedCoordinationScore,
+    MaskedTemporalEncoder,
     OrderedCaptureReadout,
     TemporalIncidenceEncoder,
     complete_relation_text_scores,
@@ -75,6 +77,39 @@ def field(batch=None, **kwargs):
         energy_floors=np.zeros(6, dtype=np.float64),
         **kwargs,
     )[0]
+
+
+def test_handoff_fold_components_are_exact_disjoint_and_bound_to_87_stage_matrix():
+    matrix = json.loads(
+        (Path(__file__).parents[1] / "configs/phaseset_v2_experiment_matrix.json").read_text()
+    )
+    components = matrix["pilot_and_group_fold_components"]
+    assert components["pilot_train"] == ["C01", "C02"]
+    assert components["pilot_validation"] == components["fold_validation"] == ["C03"]
+    assert [row["held_out"] for row in components["folds"]] == [
+        ["C00", "C06", "C10", "C14"], ["C04", "C07", "C12"], ["C05", "C08", "C13"]
+    ]
+    sealed = set(matrix["primary_split"]["sealed_test_component_labels"])
+    assert sealed == {"C09", "C11", "C15"}
+    development = set(components["development"])
+    assert not development & sealed
+    assert len(development) == 13
+    held_out = []
+    for fold in components["folds"]:
+        train, test = set(fold["train"]), set(fold["held_out"])
+        assert train == development - test - {"C03"}
+        assert not (train | test) & sealed
+        held_out.extend(fold["held_out"])
+        rows = [row for row in matrix["runs"] if row["split"] == fold["run_split"]]
+        assert len(rows) == 9
+        assert {row["seed"] for row in rows} == {1729, 2718, 31415}
+    assert len(held_out) == len(set(held_out)) == 10
+    assert len(matrix["runs"]) == 87
+    assert sum(matrix["pilot_allocation"].values()) == 12
+    assert matrix["pilot_allocation"]["B2"] == 1
+    assert matrix["budget"]["pilot_max_formal_step_fraction"] == 0.2
+    assert matrix["frozen_strong_baseline"] is None  # selection requires real pilot
+    assert all(row["status"] == "PLANNED" for row in matrix["runs"])
 
 
 def test_speed_frontend_collision_but_signed_phase_separates_antiphase():
@@ -177,7 +212,7 @@ def test_true_mean_difference_dct_retains_cross_terms():
     opposite_mean, opposite_difference = mean_difference_signal_dct(signal, -signal)
     np.testing.assert_allclose(same_difference, 0, atol=0)
     np.testing.assert_allclose(opposite_mean, 0, atol=0)
-    np.testing.assert_allclose(same_mean, opposite_difference, atol=0)
+    np.testing.assert_allclose(2 * same_mean, opposite_difference, atol=0)
     np.testing.assert_allclose(np.square(same_mean).sum(), np.square(signal).sum(), rtol=1e-14)
 
 
@@ -239,13 +274,45 @@ def test_capture_readout_distinguishes_AB_from_BA_and_sorts_storage_order():
 
 
 def test_calibration_can_correct_a_three_logit_error_and_rejects_scaled_inputs():
-    score = CalibratedCoordinationScore(initial_temperature=0.1)
+    score = CalibratedCoordinationScore(initial_temperature=0.1, initial_mixture=0.2)
     base = torch.tensor([[0.5, 0.8]])  # wrong candidate leads by 3 base logits
     coordination = torch.tensor([[1.0, -1.0]])
     result = score(base, coordination)
     assert result[0, 0] > result[0, 1]
     with pytest.raises(ValueError, match="cosines"):
         score(base * 10, coordination)
+
+
+def test_two_layer_temporal_state_continues_across_chunks_without_order_loss():
+    torch.manual_seed(1729)
+    encoder = MaskedTemporalEncoder(8)
+    sequence = torch.randn(2, 9, 8)
+    mask = torch.ones(2, 9, dtype=torch.bool)
+    mask[0, 3:5] = False
+    whole, final_states = encoder.encode_chunk(sequence, mask)
+    first, states = encoder.encode_chunk(sequence[:, :4], mask[:, :4])
+    second, continued_states = encoder.encode_chunk(sequence[:, 4:], mask[:, 4:], states)
+    assert states.shape == (2, 2, 8)
+    assert torch.equal(whole, torch.cat((first, second), dim=1))
+    assert torch.equal(final_states, continued_states)
+    assert torch.count_nonzero(whole[0, 3:5]) == 0
+    whole.sum().backward()
+    assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in encoder.parameters())
+
+
+def test_calibration_default_and_unsupported_motion_falls_back_without_relation_gradient():
+    score = CalibratedCoordinationScore(initial_temperature=0.1)
+    torch.testing.assert_close(score.mixture_logit.sigmoid(), torch.tensor(0.1))
+    base = torch.tensor([[0.5, -0.8], [0.2, -0.1]])
+    relation = torch.tensor([[-1.0, 1.0], [0.9, 0.8]], requires_grad=True)
+    result = score(base, relation, coordination_support=torch.tensor([False, True]))
+    torch.testing.assert_close(result[0], 10 * base[0])
+    result.sum().backward()
+    assert torch.count_nonzero(relation.grad[0]) == 0
+    assert torch.count_nonzero(relation.grad[1]) == 2
+    assert score.mixture_logit.grad is not None and score.mixture_logit.grad != 0
+    with pytest.raises(ValueError, match="boolean"):
+        score(base, relation, coordination_support=torch.ones(2))
 
 
 def test_complete_relation_matching_never_recombines_components_of_two_relations():

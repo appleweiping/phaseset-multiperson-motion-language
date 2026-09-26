@@ -64,3 +64,39 @@ in 13.64 seconds, including chunk lengths 1/7/31/64 versus unchunked responses,
 gap-mask equality, actor-state continuity, K=2 exact-zero regression, and the
 legacy signal/Morlet tests. Before/after source snapshots are identical.
 This is software qualification; formal V2 training remains 0/87.
+
+## Continuous native capture follow-up, 2026-09-26
+
+`prepare_continuous_capture` now preserves one group origin/yaw and the complete
+absolute timeline across accepted ten-second intervals. The original 300-frame
+missing-data decisions are unchanged; rejected windows remain zero/masked on
+the timeline, rather than concatenating their neighbors. Anti-alias FIR chunks
+include the full halo, and targets touching rejected FIR support are masked.
+Original short-gap observation masks remain false. Complete windows are used;
+any trailing source frames are explicitly recorded.
+
+`continuous_directional_phase_field` consumes the unbatched capture seam,
+preserving signed velocity and six-band support across window boundaries. The
+legacy short-window `PreparedGroupBatch` contract has not been relaxed.
+Actor, node, edge and group temporal encoders therefore see one whole field,
+not separately initialized ten-second fields. Base-window views share the
+same capture-wide coordinates and retain their absolute source starts.
+
+Server-only checks passed **106 tests, 1 CUDA-only skip in 18.24 s**, including
+FIR chunk lengths 1/7/31/300/1024, actor permutation bit equality, rejected
+intervals, retained short gaps, shared yaw, absolute window offsets, cross-seam
+Morlet support, the original preprocessing/pipeline and legacy signal suites.
+Source snapshots before and after execution are identical.
+
+A real native four-actor, 120-second training capture passed the complete
+official-model conversion and **untrained** 512D temporal forward in **63.55 s**:
+3600 source frames, `[4,2400,22,3]` at 20 Hz, 12 accepted windows, 119 local
+patches and six complete-graph edges. There was no caption semantic reading,
+trained retrieval score, optimization or test evaluation. Zero energy floors
+were solely a numerical fixture, not production calibration.
+
+This closes the continuous numeric seam and a native full-capture forward,
+not the full-corpus training host, disk-backed cache/backward scheduling,
+training-only floor fit, literature baselines or scientific experiments.
+The response cache still enforces its 1 GiB RAM limit without sampling actors
+or edges. Formal training remains **0/87**.

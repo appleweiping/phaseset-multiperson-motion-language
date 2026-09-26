@@ -15,6 +15,7 @@ from typing import Iterator
 import numpy as np
 
 from .contracts import PreparedGroupBatch, validate_prepared_group_batch
+from .continuous_capture import PreparedContinuousCapture
 from .morlet import SAMPLE_RATE_HZ, morlet_kernel_bank
 from .periodic import ResourceLimitError, validate_energy_floors
 
@@ -99,13 +100,24 @@ def _readonly(value: np.ndarray) -> np.ndarray:
 def signed_joint_velocity(batch: PreparedGroupBatch) -> tuple[np.ndarray, np.ndarray]:
     """Preserve signed XYZ; a velocity needs both frames and the pelvis tracked."""
     checked = validate_prepared_group_batch(batch)
-    coordinates = checked.skeletons.astype(np.float64)
+    return _signed_velocity_arrays(
+        checked.skeletons, checked.track_mask, checked.frame_mask, checked.actor_mask
+    )
+
+
+def _signed_velocity_arrays(
+    skeletons: np.ndarray,
+    track_mask: np.ndarray,
+    frame_mask: np.ndarray,
+    actor_mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    coordinates = skeletons.astype(np.float64)
     values = np.zeros_like(coordinates)
     mask = np.zeros_like(coordinates, dtype=np.bool_)
     displacement = (coordinates[:, :, 1:] - coordinates[:, :, :-1]) * SAMPLE_RATE_HZ
-    joint_valid = checked.track_mask[:, :, 1:] & checked.track_mask[:, :, :-1]
-    frame_valid = checked.frame_mask[:, 1:] & checked.frame_mask[:, :-1]
-    joint_valid &= frame_valid[:, None, :, None] & checked.actor_mask[:, :, None, None]
+    joint_valid = track_mask[:, :, 1:] & track_mask[:, :, :-1]
+    frame_valid = frame_mask[:, 1:] & frame_mask[:, :-1]
+    joint_valid &= frame_valid[:, None, :, None] & actor_mask[:, :, None, None]
     pelvis_valid = joint_valid[..., :1]
     relative = displacement - displacement[..., :1, :]
     relative[..., 0, :] = displacement[..., 0, :]
@@ -137,20 +149,69 @@ def directional_phase_fields(
     """
     checked = validate_prepared_group_batch(batch)
     floors = validate_energy_floors(energy_floors)
-    required_edges = sum(count * (count - 1) // 2 for count in checked.actor_counts)
+    return _directional_fields_from_arrays(
+        checked.skeletons,
+        checked.track_mask,
+        checked.frame_mask,
+        checked.actor_mask,
+        checked.actor_counts,
+        checked.valid_lengths,
+        floors,
+        config,
+    )
+
+
+def continuous_directional_phase_field(
+    capture: PreparedContinuousCapture,
+    *,
+    energy_floors: np.ndarray,
+    config: LocalPhaseConfig = LocalPhaseConfig(),
+) -> DirectionalPhaseField:
+    """Analyze a whole capture without the legacy short-window time limit.
+
+    The timeline, signed derivatives, Morlet support and patch locations span
+    ten-second boundaries. This remains an explicitly bounded RAM response
+    cache, not a disk-streaming training host. Floors remain training-only.
+    """
+    if type(capture) is not PreparedContinuousCapture:
+        raise TypeError("capture must be exactly PreparedContinuousCapture")
+    floors = validate_energy_floors(energy_floors)
+    return _directional_fields_from_arrays(
+        capture.skeletons[None],
+        capture.track_mask[None],
+        np.ones((1, capture.frame_count), dtype=np.bool_),
+        np.ones((1, capture.actor_count), dtype=np.bool_),
+        (capture.actor_count,),
+        (capture.frame_count,),
+        floors,
+        config,
+    )[0]
+
+
+def _directional_fields_from_arrays(
+    skeletons: np.ndarray,
+    track_mask: np.ndarray,
+    frame_mask: np.ndarray,
+    actor_mask: np.ndarray,
+    actor_counts: tuple[int, ...],
+    valid_lengths: tuple[int, ...],
+    floors: np.ndarray,
+    config: LocalPhaseConfig,
+) -> tuple[DirectionalPhaseField, ...]:
+    required_edges = sum(count * (count - 1) // 2 for count in actor_counts)
     if required_edges > config.edge_budget:
         raise ResourceLimitError(required_edges=required_edges, edge_budget=config.edge_budget)
     bands = morlet_kernel_bank()
     projected = sum(
         count * sum(max(0, length - band.length + 1) for band in bands) * 66 * 17
-        for count, length in zip(checked.actor_counts, checked.valid_lengths, strict=True)
+        for count, length in zip(actor_counts, valid_lengths, strict=True)
     )
     if projected > config.max_response_bytes:
         raise MemoryError("RESOURCE_LIMIT: actor Morlet responses exceed the byte budget")
-    signed, signed_mask = signed_joint_velocity(checked)
+    signed, signed_mask = _signed_velocity_arrays(skeletons, track_mask, frame_mask, actor_mask)
     results = []
     for row, (count, length) in enumerate(
-        zip(checked.actor_counts, checked.valid_lengths, strict=True)
+        zip(actor_counts, valid_lengths, strict=True)
     ):
         values = signed[row, :count, :length].reshape(count, length, 66)
         masks = signed_mask[row, :count, :length].reshape(count, length, 66)
@@ -198,8 +259,8 @@ def directional_phase_fields(
             rms = np.sqrt((local_values**2).sum(axis=1) / denominator)
             actor_features[:, patch] = np.concatenate((mean, rms), axis=-1)
             actor_mask[:, patch] = local_mask.any(axis=(1, 2))
-            pelvis_mask = checked.track_mask[row, :count, start:stop, 0]
-            pelvis_values = checked.skeletons[row, :count, start:stop, 0].astype(np.float64)
+            pelvis_mask = track_mask[row, :count, start:stop, 0]
+            pelvis_values = skeletons[row, :count, start:stop, 0].astype(np.float64)
             roots[:, patch] = (
                 np.where(pelvis_mask[..., None], pelvis_values, 0.0).sum(axis=1)
                 / pelvis_mask.sum(axis=1).clip(min=1)[:, None]

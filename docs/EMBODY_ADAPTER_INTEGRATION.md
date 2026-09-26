@@ -99,6 +99,18 @@ body-22 extraction defense in depth, 300-frame windows, 30-to-20 Hz resampling,
 missing-run rejection/interpolation, group canonicalization, augmentation, and
 dynamic collation.
 
+For the V2 continuous path, pass the same complete numeric capture to
+`prepare_continuous_capture`, then `continuous_directional_phase_field`.
+This preserves one coordinate frame, absolute window positions, anti-alias
+and Morlet halos, and actor/edge trajectories across ten-second boundaries.
+It does not replace the original window API or authorize data access.
+
+The licensed native qualification now also covers one complete four-person
+120-second training capture: official SMPL-X conversion to `[4,2400,22,3]`,
+12 accepted windows, 119 patches and an untrained 512D temporal forward, in
+63.55 seconds on server CPU. No trained scores or captions were consumed.
+The entire main-corpus conversion, calibration and training are not implied.
+
 ## Access and license gates not implemented in code
 
 - Embody data access is not established by this adapter. The official repository says a user

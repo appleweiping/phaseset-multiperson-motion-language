@@ -77,3 +77,53 @@ The one-capture thresholds are **not** the complete training/fold fit. No
 captions, final-test input, optimizer steps or retrieval scores were used.
 Formal training remains **0/87**; production host integration, complete fits,
 faithful literature baselines, pilot and scientific evaluation are unfinished.
+
+## Full-development storage and split routing
+
+`continuous_capture_io.load_prepared_continuous_capture` restores a complete
+body22 timeline from the preparation manifest's completed record and its
+three private arrays. The record, array hashes, headers, canonical actor
+lineage and complete window decisions are checked; mmap arrays stay read-only.
+This does not replace dataset rights/split admission by the execution manifest.
+
+`calibration_populations.calibration_populations` reads the V2 matrix's exact
+user-supplied component assignments. It returns five distinct training routes:
+
+- Main: the twelve registered training components; C00 remains validation.
+- Pilot: C01/C02 train, C03 selects.
+- Fold 0: development excluding C03 and held-out C00/C06/C10/C14.
+- Fold 1: development excluding C03 and held-out C04/C07/C12.
+- Fold 2: development excluding C03 and held-out C05/C08/C13.
+
+Thus C00 is training data in folds 1/2, not in main, pilot or fold 0. C03 is
+main training data but never pilot/fold training data. C09/C11/C15 cannot be
+admitted. Distinct folds refit floors and models; no main-checkpoint reuse.
+This helper does not change `PLANNED_NOT_LAUNCHABLE` or launch training.
+
+The private development consumer admits only completed body records, checks
+the frozen eligible census, creates whole-capture physical caches, and waits
+for the producer's successful source-bound receipt before fitting any floors.
+If the producer finishes while a cache snapshot is being processed, it must
+re-read and drain all newly completed records before verifying the terminal
+census. No partial sample can masquerade as complete main/fold calibration.
+The full body/caption/model inputs, physical arrays and fitted population
+files remain private; the public release contains APIs and data-free tests.
+
+The extended server CPU qualification passed **146 tests, one CUDA-only skip
+in 21.06 seconds**, including three private orchestration regressions. The
+producer-completion race is tested with mocks explicitly marked as sequencing
+tests, not as research data or results. The public storage/population tests
+are data-free and included in the package's source release.
+
+Three already prepared **real native development captures** separately passed
+admitted-record restoration, complete physical-cache creation, read-only
+reload and artifact recording in **2.94 seconds** (94,609,294 cache bytes).
+This is a bounded input-preparation qualification, not a 512D model profile,
+training-population fit or retrieval result. No captions, final-test input,
+optimizer steps or fitted floors were used. The complete 494-capture consumer
+has been launched; it is not yet declared complete, and formal training is 0/87.
+
+The disk cache is an input-preparation stage, not a completed V2 training
+host. Shared-yaw actor/root recomputation, long-trajectory backward scheduling,
+CLIP/counterfactual integration, faithful baselines, actual profile/pilot and
+the 87-stage formal matrix remain separate required work.

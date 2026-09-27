@@ -65,8 +65,13 @@ def test_directed_stream_matches_complete_packet_oracle_and_preserves_old_readou
     old_output = model(physical)
     for name in ("embedding", "patch_tokens", "topology_nodes", "valid_pair_count"):
         assert torch.equal(getattr(result.coordination, name), getattr(old_output, name))
+    # The independent oracle runs each orientation separately; production
+    # batches both through the same GRU/GEMM. Those different matrix shapes
+    # differ by a float32 rounding unit on the observed Windows backend.
+    # This oracle has a frozen numerical tolerance, not the bitwise contract
+    # for actor permutations, K=2, checkpoint replay or the old group readout.
     torch.testing.assert_close(
-        result.cosine, _directed_oracle(model, physical, text), rtol=0, atol=0
+        result.cosine, _directed_oracle(model, physical, text), rtol=2e-6, atol=2e-7
     )
     assert bool(result.periodic_support) and bool((result.cosine.abs() <= 1.00001).all())
     result.cosine.sum().backward()

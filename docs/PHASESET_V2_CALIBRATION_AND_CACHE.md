@@ -284,3 +284,52 @@ this two-family check. It used one-capture QA floors and random untrained B2:
 zero optimizer, pilot, formal, verified-CF and final-test runs. Complete parent
 task admission, true human relation evidence and the 87-stage study remain
 unfinished; their pending state must not be replaced by this qualification.
+
+## Raw parent assembly, not concatenated preprocessed children
+
+`parent_capture.ParentCaptureEpisode` accepts caller-licensed raw world body-22
+tracks with native source provenance and their actual half-open 30 Hz frame
+intervals. `assemble_parent_capture` aligns the same real actors across releases
+and preserves the complete parent timeline. Unreleased intervals retain false
+masks and exact positive-zero coordinates; they are not stationary motion,
+interpolated poses or deleted time. Overlap or changed actor membership needs
+an explicit data-contract resolution. Lineage is not a neural input.
+
+Only after assembly is the existing capture-wide origin, shared yaw, FIR and
+30-to-20 Hz grid applied once. Individually recentered/resampled child caches
+cannot reproduce this raw-input operation. The assembly budget is explicit
+and linear in actors and frames, not a claim about combined neural peak memory.
+The existing complete-10-second window policy is unchanged: a shorter final
+source tail is declared separately, not hidden or padded with invented poses.
+
+The expanded registered-server CPU regression passed **170 tests, one CUDA-only
+skip in 44.21 seconds**. It covers actor/episode permutation, direct full-world
+preprocessing, original absolute intervals, 15/150-second holes, short native
+tracking loss, tail accounting and input/resource rejection. Exact K=2 topology,
+legacy pair checks and same-runtime bitwise invariance remain strict. An
+independent directed-packet oracle uses frozen `rtol=2e-6, atol=2e-7`: separately
+executed and batched GRUs produced at most 2.98e-8 observed score rounding
+differences on Windows. This is not tolerance for actor permutation or old
+readout equality, and no model/runtime guard was changed.
+
+A preselected real development parent then passed raw licensed geometry,
+assembly, physical-cache loading, native frozen CLIP and untrained 512D
+forward/backward in **248.26 seconds**. Its three native releases contain
+**7,650 observed frames** within an **8,550-frame (285-second)** parent span,
+including **900 missing frames (30 seconds)**. The existing policy retains
+**5,600 target frames**, declares the remaining 150 source frames, accepts
+24 ten-second windows and rejects four. All 28 gap-only patches have no
+actor/edge physical evidence. Raw actor/episode permutation is bitwise equal;
+all 55 gradient tensors are finite and frozen random B2 remains unchanged.
+Five real human sentence rows have no CLIP truncation. Forward/backward took
+35.31/48.90 seconds; peak RSS was 1,969,516 KiB.
+
+This is a CPU execution qualification using one-parent QA floors and scalar
+score differentiation, **not** an all-positive one-parent InfoNCE experiment,
+trained checkpoint, GPU profile, pilot, verified-counterfactual dataset or
+formal run. Complete development-parent artifacts, five full train-only
+calibrations, the unified parent gallery/sampling/statistics contract, faithful
+literature controls, human relation verification and all 87 stages are still
+required before final research delivery. The original failed invocation is
+preserved; its existing SMPL-X library-path omission was corrected without
+installing packages or changing the qualified model source.

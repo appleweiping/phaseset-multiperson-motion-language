@@ -55,6 +55,10 @@ its pinned frozen language loader is not a substitute for native learning.
 and inverse wavelets, both reconstruction branches and original/shuffled-frame
 ordering, with explicit full-parent group adaptation and unpublished-detail
 choices. Its software qualification is not converged baseline training.
+[MIME](docs/MIME_SET_ADAPTATION.md) keeps separate role-aware original dyadic
+and shared complete-parent group APIs, full-time bidirectional co-attention,
+and a genuinely trainable pinned CLIP text tower. Group XYZ/long-text adapters
+are disclosed; equation/software checks are not original-task convergence.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

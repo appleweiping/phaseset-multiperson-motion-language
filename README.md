@@ -75,6 +75,10 @@ pilot or converged baseline result.
 The [fixed TMR/WaMo language-row cache](docs/PHASESET_V2_FROZEN_LANGUAGE_ROWS.md)
 retains every human caption occurrence and content token, reusing only frozen
 features; MIME still trains its own genuine CLIP tower.
+The [development disk source](docs/PHASESET_V2_PARENT_DISK_SOURCE.md) streams
+complete body/phase timelines and uses source/seed/epoch group yaw independent
+of model RNG. Caption eligibility and run-specific floors remain explicit
+private inputs; the complete frozen-CLIP/verified-CF interface is still pending.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

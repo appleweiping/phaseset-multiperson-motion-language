@@ -128,6 +128,44 @@ def test_host_runs_optimizer_selects_validation_and_preserves_full_parent_census
         host.fit(tmp_path / "second")
 
 
+@pytest.mark.parametrize(
+    ("failure_phase", "expected_step", "ambiguous"),
+    [("optimizer", None, True), ("scheduler", 1, False)],
+)
+def test_failed_update_reports_honest_optimizer_cursor(
+    tmp_path, monkeypatch, failure_phase, expected_step, ambiguous
+):
+    system, task, source, config, bindings = _setup(tmp_path)
+    host = ContinuousParentTrainingHost(system, task, source, config, bindings)
+    target = host._optimizer if failure_phase == "optimizer" else host._scheduler
+    original_step = target.step
+
+    def update_then_fail(*args, **kwargs):
+        original_step(*args, **kwargs)
+        raise RuntimeError(f"injected {failure_phase} failure after update")
+
+    monkeypatch.setattr(target, "step", update_then_fail)
+    with pytest.raises(RuntimeError, match=f"injected {failure_phase} failure"):
+        host.fit(tmp_path / failure_phase)
+    terminal = json.loads((tmp_path / failure_phase / "terminal.json").read_text())
+    assert terminal["outcome"] == "FAILED"
+    assert terminal["global_step"] == expected_step
+    assert terminal["optimizer_step_cursor_ambiguous"] is ambiguous
+    event = _events(tmp_path / failure_phase)[-1]
+    heartbeat = json.loads(
+        sorted((tmp_path / failure_phase / "heartbeats").glob("heartbeat-*.json"))[-1].read_text()
+    )
+    for key in (
+        "global_step",
+        "parent_batch_offset",
+        "parents_seen",
+        "optimizer_step_cursor_ambiguous",
+    ):
+        assert event[key] == heartbeat[key] == terminal[key]
+    if failure_phase == "scheduler":
+        assert terminal["parents_seen"] == 4
+
+
 @pytest.mark.parametrize("stop", [0, 1, 2, 4])
 def test_host_interruption_resume_matches_uninterrupted_bitwise(tmp_path, stop):
     system, task, source, config, bindings = _setup(tmp_path, batch_size=2)

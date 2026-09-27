@@ -299,6 +299,9 @@ class ContinuousParentTrainingHost:
             self._optimizer, lambda step: _learning_rate_multiplier(step, self._total_steps)
         )
         self._epoch = self._offset = self._step = self._parents_seen = self._sequence = 0
+        # A failure inside optimizer.step can occur after a partial update.
+        # In that window the completed-step cursor is genuinely unknown.
+        self._optimizer_step_inflight = False
         self._history: list[tuple[int, float]] = []
         self._best: CheckpointArtifact | None = None
         self._best_value: float | None = None
@@ -595,16 +598,18 @@ class ContinuousParentTrainingHost:
                         self._parameters, 1.0, error_if_nonfinite=True
                     )
                     lr = self._optimizer.param_groups[0]["lr"]
+                    self._optimizer_step_inflight = True
                     self._optimizer.step()
+                    self._step += 1
+                    self._offset += 1
+                    self._parents_seen += len(labels.parents)
+                    self._optimizer_step_inflight = False
                     self._scheduler.step()
                     if (
                         not self._is_base
                         and _stable_hash(self.system.frozen_b2.state_dict()) != self._base_state
                     ):
                         raise RuntimeError("training mutated the shared frozen B2 anchor")
-                    self._step += 1
-                    self._offset += 1
-                    self._parents_seen += len(labels.parents)
                     self._checkpoint()
                     self._event(
                         "update",
@@ -636,8 +641,21 @@ class ContinuousParentTrainingHost:
             raise
         finally:
             cleanup_error = None
+            terminal_cursor = None if self._optimizer_step_inflight else self._step
+            terminal_offset = None if self._optimizer_step_inflight else self._offset
+            terminal_parents_seen = None if self._optimizer_step_inflight else self._parents_seen
+            terminal_snapshot = {
+                "global_step": terminal_cursor,
+                "parent_batch_offset": terminal_offset,
+                "parents_seen": terminal_parents_seen,
+                "optimizer_step_cursor_ambiguous": self._optimizer_step_inflight,
+            }
             try:
-                self._monitor.finish(outcome=outcome, failure=primary_error)
+                self._monitor.finish(
+                    outcome=outcome,
+                    failure=primary_error,
+                    terminal_snapshot=terminal_snapshot,
+                )
             except BaseException as error:
                 cleanup_error = error
                 if primary_error is None:
@@ -645,16 +663,23 @@ class ContinuousParentTrainingHost:
                 else:
                     primary_error.add_note(f"monitor close also failed: {error!r}")
             try:
-                self._event("terminal", outcome=outcome, failure_class=failure)
+                self._event(
+                    "terminal",
+                    outcome=outcome,
+                    failure_class=failure,
+                    **terminal_snapshot,
+                )
                 _write_json_once(
                     self._root / "terminal.json",
                     {
                         "outcome": outcome,
                         "failure_class": failure,
                         "failure_code": parent_failure_code(primary_error),
-                        "global_step": self._step,
+                        "global_step": terminal_cursor,
+                        "parent_batch_offset": terminal_offset,
+                        "optimizer_step_cursor_ambiguous": self._optimizer_step_inflight,
                         "completed_epochs": self._epoch,
-                        "parents_seen": self._parents_seen,
+                        "parents_seen": terminal_parents_seen,
                         "latest_checkpoint": None
                         if self._latest is None
                         else str(self._latest.path),

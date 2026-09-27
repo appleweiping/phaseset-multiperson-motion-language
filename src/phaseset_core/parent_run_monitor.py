@@ -186,7 +186,13 @@ class ParentRunMonitor:
             _record(self.root / "retention" / f"retired-{old_index:08d}.json", receipt)
             self._retired.add(old.path)
 
-    def finish(self, *, outcome: str, failure: BaseException | None):
+    def finish(
+        self,
+        *,
+        outcome: str,
+        failure: BaseException | None,
+        terminal_snapshot: dict | None = None,
+    ):
         """Stop heartbeat before writing host terminal; lease remains held."""
         self._stop.set()
         if self._thread is not None and self._thread.ident is not None:
@@ -196,6 +202,8 @@ class ParentRunMonitor:
         self.check()
         if self._started is not None:
             with self._lock:
+                if terminal_snapshot is not None:
+                    self._snapshot.update(terminal_snapshot)
                 self._snapshot.update(
                     phase="TERMINAL", outcome=outcome, failure_code=parent_failure_code(failure)
                 )

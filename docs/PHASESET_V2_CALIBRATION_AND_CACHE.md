@@ -124,6 +124,59 @@ optimizer steps or fitted floors were used. The complete 494-capture consumer
 has been launched; it is not yet declared complete, and formal training is 0/87.
 
 The disk cache is an input-preparation stage, not a completed V2 training
-host. Shared-yaw actor/root recomputation, long-trajectory backward scheduling,
-CLIP/counterfactual integration, faithful baselines, actual profile/pilot and
-the 87-stage formal matrix remain separate required work.
+host. CLIP/counterfactual integration, faithful baselines, actual profile/pilot
+and the 87-stage formal matrix remain separate required work.
+
+## Whole-capture training input and shared yaw
+
+`continuous_training_input.ContinuousTrainingInput.load` binds the body22 and
+physical records through the consumer's `prepared_record`, verifies their
+fixed artifact files, and restores one complete, immutable capture. Load once
+per admitted capture rather than rehashing every response on every step.
+Rights, split admission and the fitted calibration population still belong to
+the frozen execution manifest. A positive key is `source_sha256`, never the
+possibly reused actor-set/group commitment.
+
+`view(yaw_delta=0, allow_shared_yaw=False)` reuses the read-only physical maps.
+A nonzero view rotates **all actors and all frames together** about the same
+existing group origin; it never recenters on a person or resets at a window.
+Original masks, rejected intervals, absolute times and capture identity stay.
+The transform explicitly operates on already prepared float32 body22; it does
+not claim bitwise equivalence to rotating raw parameters before resampling.
+
+Nonzero yaw recomputes complete signed velocity, Morlet responses, actor
+signed-mean/per-channel-RMS and root statistics using the same frontend and
+the unchanged fitted floors. It does **not** rotate the RMS vector, reuse stale
+zero-yaw actor/root values, or assume floating-point phase invariance. The
+RAM/edge resource gates apply to the whole capture; an oversized augmentation
+fails explicitly, with no zero-yaw fallback, dropped actors or shortened time.
+This correctness-first route reconvolves motion and its cost must be measured
+in the actual host profile; augmentation is not advertised as free or mmap-only.
+
+The caller must explicitly decide text yaw eligibility. Captions describing
+world directions cannot silently receive incompatible motion augmentation;
+this data-loading module neither reads nor rewrites any caption. A rejected
+yaw request fails rather than silently proceeding without augmentation.
+The frozen patch/hop/epsilon configuration cannot change between views.
+
+Data-free tests cover exact masks and whole timeline, rotation about the
+shared origin, correct RMS rather than the rotated-RMS shortcut, complete-field
+parity with direct recomputation, full-trajectory gradients, cache drift and
+resource/text-eligibility failures. These are implementation checks, not
+retrieval improvements or formal optimizer runs.
+
+The extended server CPU suite passed **154 tests, one CUDA-only skip in
+26.21 seconds**, with unchanged source and invocation files. The same fixed
+real four-actor, 120-second training capture then passed the admitted
+zero-yaw cache view, full nonzero-yaw recomputation and two untrained **512D
+forward/backward** evaluations in **20.49 seconds** total. Complete fields,
+embeddings and all parameter gradients match direct augmented-field execution
+bitwise in this frozen runtime; 49 gradient tensors are finite and the
+half-edge/topology branches have nonzero gradients. Peak RSS was 1,180,908 KiB.
+
+Measured admission was 0.49 seconds and yaw reconvolution 1.69 seconds. These
+single-capture qualification timings do not establish end-to-end throughput,
+p50/p95 latency or a GPU cost bound. Floors came from the prior fixed
+one-capture QA fit, **not** the full main/pilot/fold population. No captions,
+final-test input, optimizer or retrieval scores were used. The production
+optimizer/CLIP/counterfactual/baseline host and 87 formal stages remain undone.

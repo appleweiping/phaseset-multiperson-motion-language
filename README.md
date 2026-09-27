@@ -78,7 +78,10 @@ features; MIME still trains its own genuine CLIP tower.
 The [development disk source](docs/PHASESET_V2_PARENT_DISK_SOURCE.md) streams
 complete body/phase timelines and uses source/seed/epoch group yaw independent
 of model RNG. Caption eligibility and run-specific floors remain explicit
-private inputs; the complete frozen-CLIP/verified-CF interface is still pending.
+private inputs. The [frozen human CLIP row source](docs/PHASESET_V2_FROZEN_CLIP_ROWS.md)
+connects base/V2 human-only text using exact cached preparation rows with a
+distinct derived receipt, not a new encoder invocation. The genuine verified-CF
+pool and production admission remain pending.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

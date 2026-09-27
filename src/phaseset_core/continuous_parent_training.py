@@ -198,7 +198,7 @@ def validate_parent_text_batch(
     labels: ParentRetrievalBatch, text_batch: FrozenClipTextBatch
 ) -> int:
     """Bind the human prefix; any appended CF rows remain outside retrieval."""
-    text, commitments, _ = _validate_text_batch(text_batch)
+    text, commitments, _ = _validate_text_batch(text_batch, allow_row_selection=True)
     retrieval_count = len(labels.captions)
     if commitments[:retrieval_count] != labels.caption_commitments:
         raise ValueError("CLIP pool must start with every admitted human row in label order")

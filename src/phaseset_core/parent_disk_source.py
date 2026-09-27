@@ -18,6 +18,7 @@ import numpy as np
 from .continuous_capture_io import load_prepared_continuous_capture
 from .continuous_training_input import ContinuousTrainingInput, shared_yaw_capture
 from .parent_retrieval_task import ParentCaptionRecord, ParentRetrievalTask
+from .parent_clip_rows import ParentHumanClipRows
 from .tmr_feature_cache import FrozenTMRRowCache, caption_key
 from .training import OFFICIAL_SEEDS
 
@@ -71,6 +72,7 @@ class DevelopmentParentDiskSource:
         yaw_eligibility: Mapping[str, bool],
         language_rows: FrozenTMRRowCache,
         energy_floors: np.ndarray | None = None,
+        human_clip_rows: ParentHumanClipRows | None = None,
     ):
         if type(task) is not ParentRetrievalTask or any(
             type(record) is not ParentDiskRecord for record in records
@@ -114,6 +116,13 @@ class DevelopmentParentDiskSource:
             floors.setflags(write=False)
             self.energy_floors = floors
         self.language_rows = language_rows
+        if human_clip_rows is not None and (
+            type(human_clip_rows) is not ParentHumanClipRows
+            or human_clip_rows.parents
+            != {parent.annotation_family_sha256: parent for parent in task.parents}
+        ):
+            raise ValueError("human CLIP rows must cover the same complete development task")
+        self.human_clip_rows = human_clip_rows
 
     def _record_and_yaw(self, parent, *, seed, epoch, training):
         if type(parent) is not ParentCaptionRecord or (
@@ -157,3 +166,11 @@ class DevelopmentParentDiskSource:
 
     def wamo_cls(self, captions):
         return self.language_rows.wamo_cls(captions)
+
+    def text(self, labels, *, training):
+        """Human-only source seam; never turn absent CF annotations into truth."""
+        if self.human_clip_rows is None:
+            raise ValueError(
+                "base/V2 human text requires the closed original CLIP preparation batch"
+            )
+        return self.human_clip_rows.text(labels, training=training)

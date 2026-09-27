@@ -34,7 +34,11 @@ from .evaluation import (
     capture_r1_contributions,
     validate_retrieval_dataset,
 )
-from .frozen_clip_text import FrozenClipTextBatch, FrozenClipTextReceipt
+from .frozen_clip_text import (
+    FrozenClipTextBatch,
+    FrozenClipTextReceipt,
+    FrozenClipTextRowSelectionReceipt,
+)
 from .objectives import variable_positive_symmetric_infonce
 from .periodic_descriptor_cache_v2 import DescriptorWindowContext
 from .training import (
@@ -107,14 +111,7 @@ def _array_sha256(value: np.ndarray) -> str:
 
 
 def _tensor_bytes(value: Tensor) -> bytes:
-    return (
-        value.detach()
-        .to(device="cpu")
-        .contiguous()
-        .view(torch.uint8)
-        .numpy()
-        .tobytes(order="C")
-    )
+    return value.detach().to(device="cpu").contiguous().view(torch.uint8).numpy().tobytes(order="C")
 
 
 def _positive_int(value: object, label: str) -> int:
@@ -125,6 +122,8 @@ def _positive_int(value: object, label: str) -> int:
 
 def _validate_text_batch(
     value: object,
+    *,
+    allow_row_selection: bool = False,
 ) -> tuple[Tensor, tuple[bytes, ...], str]:
     """Rebind a sealed CLIP batch to its receipt and return a CPU snapshot."""
 
@@ -152,17 +151,44 @@ def _validate_text_batch(
     if type(lineage) is not tuple or len(lineage) != count:
         raise CaptureValidationError("frozen text lineage does not match its rows")
     commitments = tuple(
-        _raw32(item, f"caption_commitments[{index}]")
-        for index, item in enumerate(lineage)
+        _raw32(item, f"caption_commitments[{index}]") for index, item in enumerate(lineage)
     )
     if len(set(commitments)) != count:
         raise CaptureValidationError("caption commitments must be unique within a capture")
-    if type(receipt) is not FrozenClipTextReceipt:
-        raise CaptureValidationError("frozen text receipt type is invalid")
-    if receipt.schema != "phaseset-frozen-clip-text-receipt-v1":
-        raise CaptureValidationError("frozen text receipt schema is invalid")
-    if receipt.status != "ENCODED_AUTHORITY0":
-        raise CaptureValidationError("frozen text receipt status is invalid")
+    selected = type(receipt) is FrozenClipTextRowSelectionReceipt
+    if selected:
+        if not allow_row_selection or (
+            receipt.schema != "phaseset-frozen-clip-row-selection-v1"
+            or receipt.status != "ROW_SELECTION_AUTHORITY0"
+        ):
+            raise CaptureValidationError("derived frozen text selection is not admitted here")
+        origin = receipt.origin_receipt
+        indices = receipt.selected_indices
+        if (
+            type(origin) is not FrozenClipTextReceipt
+            or origin.schema != "phaseset-frozen-clip-text-receipt-v1"
+            or origin.status != "ENCODED_AUTHORITY0"
+            or type(indices) is not tuple
+            or len(indices) != count
+            or any(
+                type(index) is not int or not 0 <= index < len(origin.caption_rows)
+                for index in indices
+            )
+            or len(set(indices)) != count
+            or receipt.caption_rows
+            != tuple(
+                (position, *origin.caption_rows[index][1:])
+                for position, index in enumerate(indices)
+            )
+        ):
+            raise CaptureValidationError("derived frozen text selection ancestry differs")
+    else:
+        if type(receipt) is not FrozenClipTextReceipt:
+            raise CaptureValidationError("frozen text receipt type is invalid")
+        if receipt.schema != "phaseset-frozen-clip-text-receipt-v1":
+            raise CaptureValidationError("frozen text receipt schema is invalid")
+        if receipt.status != "ENCODED_AUTHORITY0":
+            raise CaptureValidationError("frozen text receipt status is invalid")
     raw = _tensor_bytes(embeddings)
     if (
         receipt.output_shape != tuple(embeddings.shape)
@@ -171,13 +197,11 @@ def _validate_text_batch(
         or receipt.output_sha256 != _sha256(raw)
     ):
         raise CaptureValidationError("frozen text output differs from its receipt")
-    if type(receipt.batch_size) is not int or receipt.batch_size < 1:
+    if not selected and (type(receipt.batch_size) is not int or receipt.batch_size < 1):
         raise CaptureValidationError("frozen text receipt batch size is invalid")
     if type(receipt.caption_rows) is not tuple or len(receipt.caption_rows) != count:
         raise CaptureValidationError("frozen text receipt caption census is invalid")
-    for index, (commitment, row) in enumerate(
-        zip(commitments, receipt.caption_rows, strict=True)
-    ):
+    for index, (commitment, row) in enumerate(zip(commitments, receipt.caption_rows, strict=True)):
         if type(row) is not tuple or len(row) != 9:
             raise CaptureValidationError("frozen text receipt caption row is invalid")
         if row[0] != index or row[1] != commitment.hex():
@@ -185,10 +209,10 @@ def _validate_text_batch(
         row_raw = _tensor_bytes(embeddings[index : index + 1].contiguous())
         if row[8] != _sha256(row_raw):
             raise CaptureValidationError("frozen text receipt row digest mismatch")
-    if type(receipt.chunk_ranges) is not tuple or not receipt.chunk_ranges:
+    if not selected and (type(receipt.chunk_ranges) is not tuple or not receipt.chunk_ranges):
         raise CaptureValidationError("frozen text receipt chunk census is invalid")
     position = 0
-    for chunk in receipt.chunk_ranges:
+    for chunk in () if selected else receipt.chunk_ranges:
         if (
             type(chunk) is not tuple
             or len(chunk) != 2
@@ -200,7 +224,7 @@ def _validate_text_batch(
         ):
             raise CaptureValidationError("frozen text receipt chunks do not partition rows")
         position = chunk[1]
-    if position != count:
+    if not selected and position != count:
         raise CaptureValidationError("frozen text receipt chunks do not cover all rows")
     try:
         receipt_sha256 = _lower_sha256(receipt.sha256, "frozen text receipt SHA-256")
@@ -259,7 +283,10 @@ class CaptureValidationWindow:
         if groups.skeletons.shape[2] != 200 or not bool(groups.frame_mask.all()):
             raise CaptureValidationError("capture validation requires complete 200-frame windows")
         descriptor_source = self.descriptor_source
-        if descriptor_source is not None and type(descriptor_source) is not CaptureDescriptorWindowSource:
+        if (
+            descriptor_source is not None
+            and type(descriptor_source) is not CaptureDescriptorWindowSource
+        ):
             raise CaptureValidationError(
                 "descriptor_source must be None or exact CaptureDescriptorWindowSource"
             )
@@ -354,9 +381,7 @@ class CaptureValidationCapture:
         reference_k = reference.actor_counts[0]
         for window in canonical[1:]:
             groups = window.groups
-            actors = frozenset(
-                item for item in groups.actor_commitments[0] if item is not None
-            )
+            actors = frozenset(item for item in groups.actor_commitments[0] if item is not None)
             if (
                 actors != reference_actors
                 or groups.group_commitments[0] != reference_group
@@ -382,9 +407,7 @@ class CaptureValidationCapture:
     @property
     def actor_commitment_set(self) -> frozenset[bytes]:
         return frozenset(
-            item
-            for item in self.windows[0].groups.actor_commitments[0]
-            if item is not None
+            item for item in self.windows[0].groups.actor_commitments[0] if item is not None
         )
 
     @property
@@ -492,20 +515,13 @@ class CaptureValidationSource:
             seen_captions.update(caption_set)
         if descriptor_rows:
             if len(descriptor_rows) != window_count:
-                raise CaptureValidationError(
-                    "capture source cannot mix v1 and v2 window lineage"
-                )
+                raise CaptureValidationError("capture source cannot mix v1 and v2 window lineage")
             descriptor_manifest = descriptor_rows[0].storage_manifest_sha256
-            if any(
-                row.storage_manifest_sha256 != descriptor_manifest
-                for row in descriptor_rows
-            ):
+            if any(row.storage_manifest_sha256 != descriptor_manifest for row in descriptor_rows):
                 raise CaptureValidationError(
                     "capture descriptor rows must share one storage manifest"
                 )
-            if tuple(row.window_ordinal for row in descriptor_rows) != tuple(
-                range(window_count)
-            ):
+            if tuple(row.window_ordinal for row in descriptor_rows) != tuple(range(window_count)):
                 raise CaptureValidationError(
                     "capture descriptor ordinals must equal canonical global order"
                 )
@@ -634,17 +650,20 @@ def _capture_fractions(
 ) -> tuple[Fraction, Fraction, Fraction]:
     rows = capture_r1_contributions(dataset)
     count = len(rows)
-    text = sum(
-        (Fraction(sum(row.text_to_motion_hits), len(row.text_to_motion_hits)) for row in rows),
-        start=Fraction(0, 1),
-    ) / count
-    motion = sum(
-        (
-            Fraction(sum(row.motion_to_text_hits), len(row.motion_to_text_hits))
-            for row in rows
-        ),
-        start=Fraction(0, 1),
-    ) / count
+    text = (
+        sum(
+            (Fraction(sum(row.text_to_motion_hits), len(row.text_to_motion_hits)) for row in rows),
+            start=Fraction(0, 1),
+        )
+        / count
+    )
+    motion = (
+        sum(
+            (Fraction(sum(row.motion_to_text_hits), len(row.motion_to_text_hits)) for row in rows),
+            start=Fraction(0, 1),
+        )
+        / count
+    )
     return text, motion, (text + motion) / 2
 
 
@@ -803,11 +822,9 @@ def _run_capture_validation_core(
                             if descriptor_plan is None:
                                 tokens, band_mask = system.encode_trainable(window.groups)
                             else:
-                                descriptor_stream = (
-                                    descriptor_plan.open_capture_validation_window(
-                                        capture,
-                                        window_position,
-                                    )
+                                descriptor_stream = descriptor_plan.open_capture_validation_window(
+                                    capture,
+                                    window_position,
                                 )
                                 tokens, band_mask = system.encode_trainable_cached(
                                     window.groups,
@@ -855,9 +872,7 @@ def _run_capture_validation_core(
                         window_commitments=tuple(
                             window.window_commitment for window in capture.windows
                         ),
-                        base_embeddings=np.ascontiguousarray(
-                            np.stack(base_rows), dtype=np.float32
-                        ),
+                        base_embeddings=np.ascontiguousarray(np.stack(base_rows), dtype=np.float32),
                         tokens=(
                             np.ascontiguousarray(np.stack(token_rows), dtype=np.float32)
                             if residual
@@ -873,7 +888,9 @@ def _run_capture_validation_core(
                 except CapturePoolingResourceLimit as error:
                     raise CaptureValidationResourceLimit(str(error)) from error
                 except CapturePoolingError as error:
-                    raise CaptureValidationError("capture pooling rejected encoder output") from error
+                    raise CaptureValidationError(
+                        "capture pooling rejected encoder output"
+                    ) from error
                 pooled_base.append(pooled.base_embedding)
                 if residual:
                     if pooled.tokens is None or pooled.band_mask is None:
@@ -886,9 +903,11 @@ def _run_capture_validation_core(
                 caption_commitments.extend(commitments[index] for index in order)
                 positive_motion_indices.extend((motion_index,) for _ in order)
 
-            motion = torch.from_numpy(
-                np.ascontiguousarray(np.stack(pooled_base), dtype=np.float32)
-            ).to(device=device).contiguous()
+            motion = (
+                torch.from_numpy(np.ascontiguousarray(np.stack(pooled_base), dtype=np.float32))
+                .to(device=device)
+                .contiguous()
+            )
             text_gallery = torch.cat(text_rows).to(device=device).contiguous()
             positive = torch.zeros(
                 (len(checked_source.captures), len(caption_commitments)),
@@ -899,12 +918,18 @@ def _run_capture_validation_core(
                 positive[row[0], caption_index] = True
             if residual:
                 assert isinstance(system, ResidualRetrievalSystem)
-                tokens_gallery = torch.from_numpy(
-                    np.ascontiguousarray(np.stack(pooled_tokens), dtype=np.float32)
-                ).to(device=device).contiguous()
-                masks_gallery = torch.from_numpy(
-                    np.ascontiguousarray(np.stack(pooled_masks), dtype=np.bool_)
-                ).to(device=device).contiguous()
+                tokens_gallery = (
+                    torch.from_numpy(
+                        np.ascontiguousarray(np.stack(pooled_tokens), dtype=np.float32)
+                    )
+                    .to(device=device)
+                    .contiguous()
+                )
+                masks_gallery = (
+                    torch.from_numpy(np.ascontiguousarray(np.stack(pooled_masks), dtype=np.bool_))
+                    .to(device=device)
+                    .contiguous()
+                )
                 logits = system.scores(
                     tokens_gallery,
                     masks_gallery,
@@ -918,8 +943,7 @@ def _run_capture_validation_core(
                 type(logits) is not Tensor
                 or logits.dtype != torch.float32
                 or logits.device != device
-                or tuple(logits.shape)
-                != (len(checked_source.captures), len(caption_commitments))
+                or tuple(logits.shape) != (len(checked_source.captures), len(caption_commitments))
                 or not logits.is_contiguous()
                 or logits.requires_grad
                 or not bool(torch.isfinite(logits).all().item())
@@ -956,9 +980,7 @@ def _run_capture_validation_core(
                 [capture.group_size for capture in checked_source.captures],
                 dtype=np.int64,
             ),
-            component_labels=tuple(
-                capture.component_label for capture in checked_source.captures
-            ),
+            component_labels=tuple(capture.component_label for capture in checked_source.captures),
         )
     )
     text_r1, motion_r1, primary_r1 = _capture_fractions(dataset)
@@ -984,10 +1006,16 @@ def _run_capture_validation_core(
 _CAPTURE_RUNTIME_BINDINGS = tuple(
     (name, globals()[name])
     for name in (
-        "CaptureValidationSource", "run_capture_validation",
-        "run_capture_validation_cached", "_run_capture_validation_core", "_snapshot_source",
-        "_capture_fractions", "pool_capture_windows", "capture_r1_contributions",
-        "validate_retrieval_dataset", "variable_positive_symmetric_infonce",
+        "CaptureValidationSource",
+        "run_capture_validation",
+        "run_capture_validation_cached",
+        "_run_capture_validation_core",
+        "_snapshot_source",
+        "_capture_fractions",
+        "pool_capture_windows",
+        "capture_r1_contributions",
+        "validate_retrieval_dataset",
+        "variable_positive_symmetric_infonce",
     )
 )
 

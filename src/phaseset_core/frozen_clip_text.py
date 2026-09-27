@@ -266,10 +266,7 @@ def _scan_snapshot(
 
 def _snapshot_manifest_sha256(rows: tuple[tuple[str, int, str], ...]) -> str:
     payload = {
-        "files": [
-            {"bytes": size, "name": name, "sha256": digest}
-            for name, size, digest in rows
-        ],
+        "files": [{"bytes": size, "name": name, "sha256": digest} for name, size, digest in rows],
         "model_id": MODEL_ID,
         "revision": REVISION,
         "schema": "phaseset-frozen-clip-snapshot-v1",
@@ -297,9 +294,8 @@ def _source_row(
     ):
         _hold("HOLD_SOURCE_IDENTITY")
     digest = _sha256_file(path)
-    if (
-        (expected_bytes is not None and metadata.st_size != expected_bytes)
-        or (expected_sha256 is not None and digest != expected_sha256)
+    if (expected_bytes is not None and metadata.st_size != expected_bytes) or (
+        expected_sha256 is not None and digest != expected_sha256
     ):
         _hold("HOLD_SOURCE_IDENTITY")
     return label, metadata.st_size, digest
@@ -345,17 +341,13 @@ def _runtime_facts(
             {
                 "cuda_available": str(bool(torch.cuda.is_available())).lower(),
                 "cuda_visible_devices": (
-                    "hidden"
-                    if os.environ.get("CUDA_VISIBLE_DEVICES") == ""
-                    else "not-hidden"
+                    "hidden" if os.environ.get("CUDA_VISIBLE_DEVICES") == "" else "not-hidden"
                 ),
                 "deterministic_algorithms": str(
                     bool(torch.are_deterministic_algorithms_enabled())
                 ).lower(),
                 "device": "cpu",
-                "float32_matmul_precision": str(
-                    torch.get_float32_matmul_precision()
-                ),
+                "float32_matmul_precision": str(torch.get_float32_matmul_precision()),
                 "huggingface_hub": str(huggingface_hub.__version__),
                 "interop_threads": str(torch.get_num_interop_threads()),
                 "intraop_threads": str(torch.get_num_threads()),
@@ -663,10 +655,7 @@ def _live_model_manifest(model: object, backend: _Backend) -> str:
 def _source_manifest_sha256(rows: tuple[tuple[str, int, str], ...]) -> str:
     return hashlib.sha256(
         _canonical_json(
-            [
-                {"bytes": size, "label": label, "sha256": digest}
-                for label, size, digest in rows
-            ]
+            [{"bytes": size, "label": label, "sha256": digest} for label, size, digest in rows]
         )
     ).hexdigest()
 
@@ -784,9 +773,8 @@ def _validate_token_batch(value: object, count: int, backend: _Backend) -> None:
             _hold("HOLD_TOKEN_BATCH")
     input_ids = value["input_ids"]
     attention_mask = value["attention_mask"]
-    if (
-        not bool(((input_ids >= 0) & (input_ids < TOKEN_VOCAB_SIZE)).all().item())
-        or not bool(((attention_mask == 0) | (attention_mask == 1)).all().item())
+    if not bool(((input_ids >= 0) & (input_ids < TOKEN_VOCAB_SIZE)).all().item()) or not bool(
+        ((attention_mask == 0) | (attention_mask == 1)).all().item()
     ):
         _hold("HOLD_TOKEN_BATCH")
 
@@ -808,10 +796,7 @@ def _untruncated_token_rows(
             or not row
             or row[0] != TOKEN_BOS_ID
             or row[-1] != TOKEN_EOS_ID
-            or any(
-                type(token) is not int or not 0 <= token < TOKEN_VOCAB_SIZE
-                for token in row
-            )
+            or any(type(token) is not int or not 0 <= token < TOKEN_VOCAB_SIZE for token in row)
         ):
             _hold("HOLD_TOKEN_LENGTH_PROBE")
         checked_rows.append(tuple(row))
@@ -955,7 +940,7 @@ class FrozenClipTextBatch:
         self,
         embeddings: Any,
         lineage: tuple[bytes, ...],
-        receipt: FrozenClipTextReceipt,
+        receipt: FrozenClipTextReceipt | FrozenClipTextRowSelectionReceipt,
         *,
         _seal: object,
     ) -> None:
@@ -974,7 +959,7 @@ class FrozenClipTextBatch:
         return self.__lineage
 
     @property
-    def receipt(self) -> FrozenClipTextReceipt:
+    def receipt(self) -> FrozenClipTextReceipt | FrozenClipTextRowSelectionReceipt:
         return self.__receipt
 
     def __repr__(self) -> str:
@@ -982,6 +967,109 @@ class FrozenClipTextBatch:
             f"FrozenClipTextBatch(Q={len(self.__lineage)}, D={EMBEDDING_DIM}, "
             f"receipt_sha256={self.__receipt.sha256!r})"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenClipTextRowSelectionReceipt:
+    """Derived cached rows, explicitly NOT a new encoder invocation.
+
+    The immutable original receipt remains available in memory. Its encoding
+    chunks/runtime/model identities describe preparation, not the runtime or
+    batching of this selection. Persist the original batch and select again;
+    the original receipt rehydrator deliberately rejects this derived schema.
+    """
+
+    origin_receipt: FrozenClipTextReceipt
+    selected_indices: tuple[int, ...]
+    caption_rows: tuple[tuple[int, str, str, int, int, bool, str, str, str], ...]
+    output_bytes: int
+    output_sha256: str
+    output_shape: tuple[int, int]
+    output_stride: tuple[int, int]
+    schema: str = "phaseset-frozen-clip-row-selection-v1"
+    status: str = "ROW_SELECTION_AUTHORITY0"
+
+    def to_public_dict(self) -> dict[str, object]:
+        origin = self.origin_receipt
+        return {
+            "authority": AUTHORITY,
+            "production": PRODUCTION,
+            "training_authorized": TRAINING_AUTHORIZED,
+            "schema": self.schema,
+            "status": self.status,
+            "operation": "ordered_exact_cached_row_selection_no_encoder_call",
+            "origin_receipt_sha256": origin.sha256,
+            "origin_frozen_embedding_cache_key_sha256": origin.frozen_embedding_cache_key_sha256,
+            "origin_source_manifest_sha256": origin.source_manifest_sha256,
+            "origin_runtime_manifest_sha256": origin.runtime_manifest_sha256,
+            "origin_snapshot_manifest_sha256": origin.snapshot_manifest_sha256,
+            "origin_live_model_manifest_sha256": origin.live_model_manifest_sha256,
+            "model_id": MODEL_ID,
+            "revision": REVISION,
+            "method_id": METHOD_ID,
+            "selected_indices": list(self.selected_indices),
+            "caption_rows": [list(row) for row in self.caption_rows],
+            "output": {
+                "bytes": self.output_bytes,
+                "sha256": self.output_sha256,
+                "shape": list(self.output_shape),
+                "stride": list(self.output_stride),
+                "dtype": "torch.float32",
+                "device": "cpu",
+                "requires_grad": False,
+            },
+        }
+
+    def canonical_json_bytes(self) -> bytes:
+        return _canonical_json(self.to_public_dict()) + b"\n"
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.canonical_json_bytes()).hexdigest()
+
+
+def select_frozen_clip_text_rows(
+    original: FrozenClipTextBatch, indices: tuple[int, ...]
+) -> FrozenClipTextBatch:
+    """Gather from one genuine encoded/rehydrated batch without relabeling.
+
+    Captions and commitments cannot be supplied or rebound. No model, runtime
+    probe or RNG call occurs. Nested selections and repeated commitments are
+    rejected: callers always address the saved original preparation census.
+    This supplies cached numbers, never rights, CF truth or training authority.
+    """
+    from .capture_validation import _validate_text_batch
+
+    if (
+        type(original) is not FrozenClipTextBatch
+        or type(original.receipt) is not FrozenClipTextReceipt
+    ):
+        raise ValueError("row selection requires the original sealed encoded batch")
+    embeddings, commitments, _ = _validate_text_batch(original)
+    if (
+        type(indices) is not tuple
+        or not indices
+        or any(type(index) is not int or not 0 <= index < len(commitments) for index in indices)
+        or len(set(indices)) != len(indices)
+    ):
+        raise ValueError("selection requires unique in-range exact integer row indices")
+    selected = embeddings[list(indices)].contiguous()
+    raw = _tensor_bytes(selected)
+    receipt = FrozenClipTextRowSelectionReceipt(
+        origin_receipt=original.receipt,
+        selected_indices=indices,
+        caption_rows=tuple(
+            (position, *original.receipt.caption_rows[index][1:])
+            for position, index in enumerate(indices)
+        ),
+        output_bytes=len(raw),
+        output_sha256=hashlib.sha256(raw).hexdigest(),
+        output_shape=tuple(selected.shape),
+        output_stride=tuple(selected.stride()),
+    )
+    return FrozenClipTextBatch(
+        selected, tuple(commitments[index] for index in indices), receipt, _seal=_CONSTRUCTION_SEAL
+    )
 
 
 def _rehydration_unique_object(
@@ -1136,8 +1224,7 @@ def _rehydration_chunk_ranges(
     if type(value) is not list:
         _hold("HOLD_REHYDRATION_CHUNKS")
     expected = tuple(
-        (start, min(start + batch_size, count))
-        for start in range(0, count, batch_size)
+        (start, min(start + batch_size, count)) for start in range(0, count, batch_size)
     )
     checked: list[tuple[int, int]] = []
     for item in value:
@@ -1265,9 +1352,7 @@ def _rehydration_runtime(value: object) -> tuple[tuple[str, str], ...]:
 def _rehydration_cache_key(
     *,
     batch_size: int,
-    caption_rows: tuple[
-        tuple[int, str, str, int, int, bool, str, str, str], ...
-    ],
+    caption_rows: tuple[tuple[int, str, str, int, int, bool, str, str, str], ...],
     chunk_ranges: tuple[tuple[int, int], ...],
     runtime_manifest_sha256: str,
     snapshot_manifest_sha256: str,
@@ -1392,9 +1477,7 @@ def _rehydrate_frozen_clip_text_batch(
     count = len(caption_rows_value)
     if not 1 <= count <= MAX_CAPTIONS:
         _hold("HOLD_REHYDRATION_CAPTION_ROWS")
-    if type(receipt_value["caption_count"]) is not int or receipt_value[
-        "caption_count"
-    ] != count:
+    if type(receipt_value["caption_count"]) is not int or receipt_value["caption_count"] != count:
         _hold("HOLD_REHYDRATION_CAPTION_ROWS")
     batch_size = _rehydration_positive_int(
         receipt_value["batch_size"],
@@ -1477,9 +1560,7 @@ def _rehydrate_frozen_clip_text_batch(
         _hold("HOLD_REHYDRATION_OUTPUT")
     row_bytes = EMBEDDING_DIM * 4
     if any(
-        hashlib.sha256(
-            output_bytes[index * row_bytes : (index + 1) * row_bytes]
-        ).hexdigest()
+        hashlib.sha256(output_bytes[index * row_bytes : (index + 1) * row_bytes]).hexdigest()
         != row[8]
         for index, row in enumerate(caption_rows)
     ):
@@ -1542,10 +1623,7 @@ def _rehydrate_frozen_clip_text_batch(
         source_files=source_files,
         source_manifest_sha256=source_manifest,
     )
-    if (
-        receipt.canonical_json_bytes() != receipt_json_bytes
-        or receipt.sha256 != expected_digest
-    ):
+    if receipt.canonical_json_bytes() != receipt_json_bytes or receipt.sha256 != expected_digest:
         _hold("HOLD_REHYDRATION_RECEIPT_REBUILD")
     return FrozenClipTextBatch(
         frozen_embeddings,
@@ -1796,9 +1874,7 @@ class FrozenClipTextAdapter:
                     attention_mask_digest,
                 ),
                 output_digest,
-            ) in enumerate(
-                zip(lineage, text_digests, token_rows, row_digests, strict=True)
-            )
+            ) in enumerate(zip(lineage, text_digests, token_rows, row_digests, strict=True))
         )
         snapshot_manifest = _snapshot_manifest_sha256(self._snapshot_rows)
         source_manifest = _source_manifest_sha256(self._source_rows)
@@ -1922,6 +1998,7 @@ __all__ = [
     "FrozenClipTextAdapterError",
     "FrozenClipTextBatch",
     "FrozenClipTextReceipt",
+    "FrozenClipTextRowSelectionReceipt",
     "MAX_BATCH_SIZE",
     "MAX_CAPTIONS",
     "METHOD_ID",
@@ -1931,4 +2008,5 @@ __all__ = [
     "TRAINING_AUTHORIZED",
     "load_frozen_clip_text_adapter",
     "rehydrate_frozen_clip_text_batch",
+    "select_frozen_clip_text_rows",
 ]

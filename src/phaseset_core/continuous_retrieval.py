@@ -176,7 +176,7 @@ class ContinuousRetrievalSystem(nn.Module):
             or any(type(view) is not ContinuousTrainingView for view in views)
         ):
             raise ValueError("views must be a nonempty tuple of admitted continuous inputs")
-        text, _, receipt_sha = _validate_text_batch(text_batch)
+        text, _, receipt_sha = _validate_text_batch(text_batch, allow_row_selection=True)
         device = next(self.coordination.parameters()).device
         keys = tuple(view.positive_capture_key for view in views)
         text = text.to(device)

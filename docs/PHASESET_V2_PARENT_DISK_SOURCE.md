@@ -28,9 +28,10 @@ This source does not fit them or authorize reusing main-experiment floors in
 a held-out fold. Source, annotation, floor, feature, augmentation-rule and
 runtime identities belong in the private execution inputs.
 
-This is the literature source interface and the body/phase loading seam,
-not the entire base/V2 text interface: that still needs its admitted frozen
-CLIP batches and genuinely two-human-verified counterfactual rows. The source
+The optional [frozen human CLIP rows](PHASESET_V2_FROZEN_CLIP_ROWS.md) connect
+the base/V2 human-only text interface without loading a tower at training.
+This is not the entire verified-CF interface: that still needs genuinely
+two-human-verified counterfactual rows and their separate admission. The source
 also supplies no production lock, heartbeat, budget, retention, hardware,
 pilot, formal-stage or final-test authority.
 

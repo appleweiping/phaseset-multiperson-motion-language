@@ -117,7 +117,7 @@ class ContinuousBaseRetrievalSystem(nn.Module):
             or any(type(capture) is not PreparedContinuousCapture for capture in captures)
         ):
             raise ValueError("base scoring requires complete prepared capture rows")
-        text, _, receipt_sha = _validate_text_batch(text_batch)
+        text, _, receipt_sha = _validate_text_batch(text_batch, allow_row_selection=True)
         device = next(self.base.parameters()).device
         motion = torch.stack([self.encode_capture(capture) for capture in captures])
         scores = self.base.scores(motion.contiguous(), text.to(device).contiguous())

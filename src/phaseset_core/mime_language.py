@@ -143,9 +143,10 @@ class TrainableMIMECLIP(nn.Module):
             mask = tokens.attention_mask[index : index + 1].to(witness.device)
 
             def encode(parameter, ids=ids, mask=mask):
-                return self.tower(
-                    input_ids=ids, attention_mask=mask, return_dict=True
-                ).pooler_output[0]
+                # The extracted CLIPTextTransformer returns a pooled ModelOutput
+                # directly; unlike the outer pretrained model it has no
+                # return_dict keyword in the frozen Transformers runtime.
+                return self.tower(input_ids=ids, attention_mask=mask).pooler_output[0]
 
             rows.append(
                 checkpoint(encode, witness, use_reentrant=False, preserve_rng_state=True)

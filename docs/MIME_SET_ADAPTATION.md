@@ -53,5 +53,9 @@ equations, all parameter families, endpoint swap, all K=3 permutations and
 input-gradient equivariance, dropout/checkpoint/RNG equality, missing root steps,
 full timeline and complete text segmentation. Tiny language seams are labeled
 software fixtures; only a real pinned CLIP/native attempt proves that execution.
+When Transformers is installed, a random small actual CLIP component also
+checks the extracted-transformer API and checkpoint/direct gradient/RNG equality;
+its outer model constructor initializes the attention backend, as in asset loading.
+That component is not a pretrained-language or real-data qualification.
 Neither software nor native backward qualification proves original-task learning,
 production-host readiness, retrieval performance, scientific claims or release.

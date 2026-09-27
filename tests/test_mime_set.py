@@ -1,6 +1,7 @@
 """Analytic software checks, not original-task or human-data performance."""
 
 from dataclasses import replace
+import copy
 import itertools
 import math
 from types import SimpleNamespace
@@ -71,7 +72,7 @@ class FixtureTower(nn.Module):
         self.embeddings.token_embedding = nn.Embedding(128, 512)
         self.mix = nn.Linear(512, 512)
 
-    def forward(self, input_ids, attention_mask, return_dict):
+    def forward(self, input_ids, attention_mask):
         x = self.embeddings.token_embedding(input_ids % 128)
         x = (x * attention_mask[..., None]).sum(1) / attention_mask.sum(1)[:, None]
         return SimpleNamespace(pooler_output=self.mix(x))
@@ -85,6 +86,54 @@ def language(width=16, checkpoint=True, group=True):
         checkpoint_segments=checkpoint,
         group_long_text=group,
     )
+
+
+def test_actual_clip_transformer_api_and_checkpoint_gradients():
+    """Random tiny CLIP component, not pretrained assets or benchmark evidence.
+
+    Use the actual extracted transformer API, not just a permissive mock.
+    Transformers is optional in data-free installs; the fixed server has it.
+    """
+    module = pytest.importorskip("transformers.models.clip.modeling_clip")
+    from transformers import CLIPTextConfig
+
+    torch.manual_seed(1729)
+    # Match the asset factory: the pretrained-model constructor selects an
+    # actual attention backend before its extracted transformer is called.
+    # A naked internal transformer leaves config._attn_implementation=None.
+    tower = module.CLIPTextModel(
+        CLIPTextConfig(
+            vocab_size=128,
+            hidden_size=512,
+            intermediate_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            max_position_embeddings=77,
+            bos_token_id=126,
+            eos_token_id=127,
+            pad_token_id=127,
+            attention_dropout=0.1,
+        )
+    ).text_model
+    projected = TrainableMIMECLIP(tower, FixtureTokenizer(), width=16)
+    direct = copy.deepcopy(projected)
+    direct.checkpoint_segments = False
+    ids = torch.full((2, 77), 127, dtype=torch.int64)
+    ids[:, :4] = torch.tensor([[126, 5, 6, 127], [126, 8, 9, 127]])
+    masks = torch.zeros_like(ids, dtype=torch.bool)
+    masks[:, :4] = True
+    tokens = MIMETextTokens(ids, masks, (1, 1))
+    rng = torch.get_rng_state()
+    output = projected(tokens)
+    output.square().sum().backward()
+    after = torch.get_rng_state()
+    torch.set_rng_state(rng)
+    oracle = direct(tokens)
+    oracle.square().sum().backward()
+    assert torch.equal(output, oracle) and torch.equal(after, torch.get_rng_state())
+    for parameter, expected in zip(projected.parameters(), direct.parameters(), strict=True):
+        assert parameter.grad is not None and torch.isfinite(parameter.grad).all()
+        assert torch.equal(parameter.grad, expected.grad)
 
 
 def manual_attention(module, query, key, value, key_mask):

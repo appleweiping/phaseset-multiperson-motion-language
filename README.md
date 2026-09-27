@@ -72,14 +72,18 @@ shares the full-parent AdamW, validation selection and checkpoint/resume loop,
 while keeping each baseline's original objective. Analytic optimizer/resume
 checks and native dense-gradient replay are distinct from a native training
 pilot or converged baseline result.
+The [fixed TMR/WaMo language-row cache](docs/PHASESET_V2_FROZEN_LANGUAGE_ROWS.md)
+retains every human caption occurrence and content token, reusing only frozen
+features; MIME still trains its own genuine CLIP tower.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.
 There are still **0/87 formal V2 stages** and no native-data retrieval result.
 Approved main-data and licensed body-model assets have been obtained privately,
-and the handoff fold assignments have been recovered. Whole-parent preprocessing,
-run-specific admission, faithful baseline training, resource profiling, and real
-human relational verification still require actual execution evidence.
+and the handoff fold assignments have been recovered. Complete development-parent
+preprocessing and five training-only physical calibrations have closed private
+receipts. Run-specific admission, faithful baseline training, resource profiling,
+and real human relational verification still require actual execution evidence.
 The descriptions and score equation below document the preserved V1 core,
 not completed V2 experiments or a submission-ready paper.
 

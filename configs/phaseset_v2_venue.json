@@ -1,0 +1,22 @@
+{
+  "schema": "phaseset-v2-venue-amendment-v1",
+  "amendment_date": "2026-09-27",
+  "user_selected_venue": "ACM ICMR 2027",
+  "track": "Regular long research paper",
+  "status": "PLANNED_NOT_SUBMITTED",
+  "deadline": "2027-01-31T23:59:59-12:00",
+  "review": "double-blind",
+  "latex_class": "acmart",
+  "latex_options": ["sigconf", "review", "anonymous"],
+  "maximum_body_pages": 8,
+  "maximum_reference_only_pages": 2,
+  "appendices_allowed": false,
+  "supplementary_material_allowed": false,
+  "official_submission_portal_status_at_check": "More details will be announced soon",
+  "checked_on": "2026-09-27",
+  "official_sources": ["https://www.icmr2027.org/date", "https://www.icmr2027.org/cfc"],
+  "scientific_matrix_changed": false,
+  "compute_budget_changed": false,
+  "public_repository_anonymity": "Public development continues; the anonymous submission must not identify authors or link to identifying websites. Keep a separate submission artifact.",
+  "submission_authority": false
+}

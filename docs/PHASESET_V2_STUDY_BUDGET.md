@@ -19,6 +19,9 @@ Reservations是实际启动数的保守上界，spawn失败也消费名额，不
 按实际分配wall time×GPU数收费，失败/中断也收费；早结束归还未用时长，但不
 归还pilot/formal名额。超过预估/300h的实际用量照实结算，不能为使数字好看拒记。
 Optimizer-step超cap也保留成本并标出，不能冒充合同通过；操作员须修复根因。
+实际硬中断未留下完整terminal时，FAILED/INTERRUPTED可显式记录未知cursor=null，
+成本仍照实计入；单列unknown cursor，不伪造0步，也不允许以未知cursor称COMPLETED
+或NOT_STARTED。原整数cursor接口不变，重启仍需实际原始证据和checkpoint恢复。
 账本不会自动kill进程、判断关系真值、选择seed或关闭科学acceptance gate。
 
 profile必须0 optimizer updates；真实训练不能藏在未计数profile中。若完整training
@@ -40,6 +43,8 @@ JSON中的`scientific_or_launch_authority:false`明确是成本证据，不替�
 生产外部controller的实际spawn/timeout/settlement仍要有真实收据，软件模拟账本
 和测试中模拟90 reservations不等于启动了90个实验。所有数值/模型/资格仍只在
 登记服务器；公开只含源代码、合成bookkeeping测试和不敏感说明。
+新[Linux process controller](PHASESET_V2_STUDY_PROCESS.md)提供实际执行接入；
+其本身不授科学admission，真实nativeGPU训练还需独立资格和数据/关系合同。
 
 ## 本次实际限定资格
 
@@ -59,5 +64,7 @@ CUDA分配前HOLD，计0。这是保守历史成本，不是精确allocation计�
 唯一私有生产journal现在history34、pending0、formal0、pilot0、formalstepfreeze
 未记录。旧失败/资产/收据保留，未新增GPU分配/优化器步骤、重启或结构返工。
 
-这些软件测试和一次历史bootstrap不替代真实production controller资格、完整
-training profile、既定pilot/87阶段学习、two-human关系核实、结果统计或论文交付。
+这些bookkeeping测试和一次历史bootstrap本身不替代production controller资格。
+新controller另已完成[23项实际Linux软件资格](PHASESET_V2_STUDY_PROCESS.md)，
+仍不替代native GPU接入、完整training profile、既定pilot/87阶段学习、two-human
+关系核实、结果统计或论文交付。

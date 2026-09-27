@@ -42,6 +42,11 @@ multi-person skeleton sequence
 
 ## PhaseSet-V2 research upgrade — 2026-09-26
 
+The user-selected target is now [ACM ICMR 2027](docs/PHASESET_V2_ICMR_TARGET.md).
+The venue amendment changes submission format, not the scientific matrix or
+compute budget. The existing ICASSP manuscript is historical, not an ICMR-ready
+paper or a submitted result.
+
 The new [V2 amendment](docs/PHASESET_V2_AMENDMENT.md) introduces signed local
 phase, time-varying actor–edge incidence, chronological capture readout, and
 verified counterfactual coordination supervision. The
@@ -88,8 +93,13 @@ supports explicit recent/best checkpoint retention without deleting predecessor
 or historical evidence. It does not grant formal starts or global compute budget.
 The [persistent study budget](docs/PHASESET_V2_STUDY_BUDGET.md) preserves actual
 historical GPU charges, pending wall-time envelopes, fixed pilot allocations,
-and rooted formal predecessors. Bookkeeping qualification does not close the
-production spawn/timeout/settlement integration or scientific admission.
+and rooted formal predecessors. Bookkeeping alone does not qualify process
+execution or scientific admission.
+The [Linux process controller](docs/PHASESET_V2_STUDY_PROCESS.md) connects
+reservations to owned child sessions, verified exit and actual wall-time charges.
+Its 23 focused tests ran on the registered Linux server with actual stdlib
+children, not native training. Native GPU integration and scientific admission
+still need their own evidence.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

@@ -246,6 +246,9 @@ class StudyBudget:
                     for key, row in state["settled"].items()
                     if row["optimizer_step_cap_exceeded"]
                 ),
+                "unknown_optimizer_cursor_attempt_ids": sorted(
+                    key for key, row in state["settled"].items() if row["completed_steps"] is None
+                ),
                 "scientific_or_launch_authority": False,
             }
 
@@ -393,16 +396,19 @@ class StudyBudget:
         attempt_id: str,
         *,
         actual_wall_seconds: float,
-        completed_steps: int,
+        completed_steps: int | None,
         outcome: str,
         evidence: str,
     ):
         """Observed child termination; overspend is recorded, never suppressed."""
         _seconds(actual_wall_seconds, "actual allocated wall time")
-        _integer(completed_steps, "completed optimizer cursor")
+        if completed_steps is not None:
+            _integer(completed_steps, "completed optimizer cursor")
         _text(evidence, "actual process/terminal evidence")
         if outcome not in ("COMPLETED", "FAILED", "INTERRUPTED", "NOT_STARTED"):
             raise StudyBudgetError("explicit terminal outcome is required")
+        if completed_steps is None and outcome in ("COMPLETED", "NOT_STARTED"):
+            raise StudyBudgetError("success or unstarted needs a known optimizer cursor")
         with _AttemptLease.acquire(self.root):
             state = self._state()
             reservation = state["pending"].get(attempt_id)
@@ -421,7 +427,8 @@ class StudyBudget:
                 {
                     "attempt_id": attempt_id,
                     "outcome": outcome,
-                    "optimizer_step_cap_exceeded": completed_steps > reservation["planned_steps"],
+                    "optimizer_step_cap_exceeded": completed_steps is not None
+                    and completed_steps > reservation["planned_steps"],
                     "completed_steps": completed_steps,
                     "actual_wall_seconds": actual_wall_seconds,
                     "actual_gpu_seconds": actual_wall_seconds * reservation["gpu_count"],

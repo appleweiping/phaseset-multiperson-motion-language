@@ -387,6 +387,27 @@ def test_step_cap_violation_cannot_hide_actual_gpu_charge(tmp_path):
     assert summary["optimizer_step_cap_exceeded_attempt_ids"] == ["analytic-1"]
 
 
+def test_missing_optimizer_cursor_does_not_invent_zero_or_hide_failed_cost(tmp_path):
+    budget = create(tmp_path)
+    reserve(budget)
+    settle(budget, completed_steps=None)
+    summary = budget.summary()
+    assert summary["usage"]["gpu_seconds"] == 55
+    assert summary["unknown_optimizer_cursor_attempt_ids"] == ["analytic-1"]
+    assert summary["unsettled_attempt_ids"] == []
+    row = json.loads((budget.root / "event-00000002.json").read_text())
+    assert row["completed_steps"] is None
+
+
+def test_unknown_cursor_cannot_claim_completed_or_unstarted(tmp_path):
+    budget = create(tmp_path)
+    reserve(budget)
+    for outcome in ("COMPLETED", "NOT_STARTED"):
+        with pytest.raises(StudyBudgetError, match="known optimizer cursor"):
+            settle(budget, completed_steps=None, outcome=outcome, actual_wall_seconds=0)
+    assert budget.summary()["unsettled_attempt_ids"] == ["analytic-1"]
+
+
 def test_concurrent_reservations_cannot_double_spend_last_envelope(tmp_path):
     budget = create(tmp_path)
     barrier = threading.Barrier(3)

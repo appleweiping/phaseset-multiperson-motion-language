@@ -10,6 +10,7 @@ started here. Human verification of counterfactuals remains external.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 import hashlib
 import random
 
@@ -178,6 +179,22 @@ def backward_parent_batch(
         set(labels.motion_positive_keys)
     ) != len(views):
         raise ValueError("released siblings cannot enter a parent batch twice")
+    by_source = {view.positive_capture_key: view for view in views}
+    return backward_loaded_parent_batch(
+        system,
+        labels,
+        text_batch,
+        load_view=lambda source: by_source[source],
+        counterfactuals=counterfactuals,
+        cf_weight=cf_weight,
+        margin=margin,
+    )
+
+
+def validate_parent_text_batch(
+    labels: ParentRetrievalBatch, text_batch: FrozenClipTextBatch
+) -> int:
+    """Bind the human prefix; any appended CF rows remain outside retrieval."""
     text, commitments, _ = _validate_text_batch(text_batch)
     retrieval_count = len(labels.captions)
     if commitments[:retrieval_count] != labels.caption_commitments:
@@ -185,18 +202,55 @@ def backward_parent_batch(
     for caption, row in zip(labels.captions, text_batch.receipt.caption_rows, strict=False):
         if hashlib.sha256(caption.encode("utf-8")).hexdigest() != row[2]:
             raise ValueError("CLIP human text differs from the official parent caption")
+    return len(text)
+
+
+def backward_loaded_parent_batch(
+    system: ContinuousRetrievalSystem,
+    labels: ParentRetrievalBatch,
+    text_batch: FrozenClipTextBatch,
+    *,
+    load_view: Callable[[str], ContinuousTrainingView],
+    counterfactuals: ParentCounterfactualRows,
+    cf_weight: float,
+    margin: float,
+    progress: Callable[[str, int], None] | None = None,
+) -> ParentBackwardResult:
+    """The same VJP replay with physical inputs loaded one parent at a time.
+
+    The loader must return the admitted complete source, with the same physical
+    transform on cache/replay. RNG is captured before loading and restored for
+    replay; a deterministic private source may instead derive yaw from epoch
+    and source. No physical batch tuple or all-capture graph is retained here.
+    """
+    if not isinstance(system, ContinuousRetrievalSystem):
+        raise TypeError("complete parent training requires the V2 retrieval system")
+    if (
+        not labels.parents
+        or len(set(labels.motion_source_keys)) != len(labels.parents)
+        or len(set(labels.motion_positive_keys)) != len(labels.parents)
+    ):
+        raise ValueError("complete parent labels must contain distinct admitted sources/families")
+    text_count = validate_parent_text_batch(labels, text_batch)
+    retrieval_count = len(labels.captions)
     device = next(system.parameters()).device
-    indices = counterfactuals.indices(labels, text_count=len(text), device=device)
+    indices = counterfactuals.indices(labels, text_count=text_count, device=device)
     positive_mask = labels.positive_mask(device=device)
     was_training = system.training
     system.train()
     system.zero_grad(set_to_none=True)
     cached, states = [], []
     try:
-        for view in views:
+        for index, source in enumerate(labels.motion_source_keys):
+            if progress is not None:
+                progress("cache", index)
             states.append(_capture_rng())
+            view = load_view(source)
+            if type(view) is not ContinuousTrainingView or view.positive_capture_key != source:
+                raise ValueError("parent loader returned a different physical source")
             with torch.no_grad():
                 cached.append(system.score((view,), text_batch).scores.detach())
+            del view
         after = _capture_rng()
         scores = torch.cat(cached).detach().requires_grad_(True)
         if not bool(torch.isfinite(scores).all()):
@@ -217,13 +271,20 @@ def backward_parent_batch(
         if scores.grad is None:
             raise RuntimeError("parent score cache has no objective gradient")
         try:
-            for index, (view, state) in enumerate(zip(views, states, strict=True)):
+            for index, (source, state) in enumerate(
+                zip(labels.motion_source_keys, states, strict=True)
+            ):
+                if progress is not None:
+                    progress("replay", index)
                 _restore_rng(state)
+                view = load_view(source)
+                if type(view) is not ContinuousTrainingView or view.positive_capture_key != source:
+                    raise ValueError("parent loader returned a different physical source")
                 replay = system.score((view,), text_batch)
                 if not torch.equal(replay.scores.detach(), cached[index]):
                     raise RuntimeError("complete parent replay changed its score row")
                 torch.autograd.backward(replay.scores, scores.grad[index : index + 1])
-                del replay
+                del replay, view
         finally:
             _restore_rng(after)
         if any(parameter.grad is not None for parameter in system.frozen_b2.parameters()):
@@ -236,10 +297,10 @@ def backward_parent_batch(
         return ParentBackwardResult(
             float(loss.detach().cpu()),
             scores.detach().cpu(),
-            len(views),
+            len(labels.parents),
             retrieval_count,
             int(verified.sum()),
-            len(views),
+            len(labels.parents),
         )
     finally:
         system.train(was_training)

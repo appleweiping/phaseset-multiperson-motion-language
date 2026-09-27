@@ -55,9 +55,27 @@ parent 的人工 holistic 文本；不读取 motion、phase、模型分数、hel
 evaluation 仍只返回原人工文本，stage held-out 不进入 weak training。
 模型、RNG、源码、资产及生产预算前后不变，所有退出码 0、stderr 空。
 
-这是数据准备，不是 native learning、pilot 或检索增益。训练 yaw、实际
-native CF backward、GPU profile 及正式实验仍待；正式 **0/87**、pilot
-**0/12**。机器标签永不升级为人工
+这部分是数据准备，不是 native learning、pilot 或检索增益。
+
+## 完整原生 capture 的实际 weak-CF backward
+
+同日 19:54:32–19:59:08 UTC，一次 CPU FP32/单线程检查使用两个完整
+四人 capture（各 5,800 帧、共 54 个有效窗口），不裁短、不拼接。
+完整 512D V2、随机未训练且冻结的 B2，使用 10 条原人工正例和 6 条
+实际生成弱负例，进行全 capture score cache、RNG replay 和 VJP。
+55 个可训练梯度张量全部存在且有限，有非零梯度；模型权重按位未改变。
+cache/replay/VJP 耗时 264.08 秒；退出码均 0、stderr 空。
+receipt SHA-256：
+`5e5889cdf7666b2f592dde5c81db4f6e536d236187ae1018203b45fb54f4b50d`。
+
+没有 optimizer、GPU、非零训练 yaw、正式学习或检索成绩；这不是完整训练
+成本或性能结论。生产预算保留历史 GPU 用量，新增两个 CPU profile
+记账事件已闭合，正式 **0/87**、pilot **0/12**。
+
+一次训练文本 yaw 分类在固定时限内没有返回，失败证据保留，不重生成。
+该调用没有提供任何资格决定。后续诊断对未知资格显式使用零 yaw，并记录
+“资格未知”，不能称为语义否决、非零 yaw 验收或全关增强政策通过。
+GPU profile 和正式学习仍待实际可用资源。机器标签永不升级为人工
 `verified_false`、独立运动真值或历史两人挑战成功。
 
 公开选择重现（独立合适 CPU 环境，不含私有预算 caller）：

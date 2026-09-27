@@ -123,3 +123,10 @@ resume, concrete input drift, truncated checkpoints and wrong progress cursor.
 They also retain the existing independent dense-versus-replay gradient tests.
 None is evidence of real native learning, a paper metric, GPU cost, human CF
 truth, or successful completion of any of the 87 formal stages.
+
+A separate native CPU qualification has now replayed two complete four-person
+captures through the actual 512D V2 score/loss backward with ten original human
+rows and six disclosed machine weak negatives. All 55 trainable gradient
+tensors were finite and weights stayed unchanged; no optimizer was created.
+See the [weak-pool qualification scope](PHASESET_V2_WEAK_CLIP_POOL.md).
+This closes that input/loss seam, not native learning or a hardware cost claim.

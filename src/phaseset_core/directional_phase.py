@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from pathlib import Path
 from typing import Iterator
 
 import numpy as np
@@ -197,6 +198,7 @@ def _directional_fields_from_arrays(
     valid_lengths: tuple[int, ...],
     floors: np.ndarray,
     config: LocalPhaseConfig,
+    response_directory: Path | None = None,
 ) -> tuple[DirectionalPhaseField, ...]:
     required_edges = sum(count * (count - 1) // 2 for count in actor_counts)
     if required_edges > config.edge_budget:
@@ -206,13 +208,13 @@ def _directional_fields_from_arrays(
         count * sum(max(0, length - band.length + 1) for band in bands) * 66 * 17
         for count, length in zip(actor_counts, valid_lengths, strict=True)
     )
-    if projected > config.max_response_bytes:
+    if response_directory is not None and len(actor_counts) != 1:
+        raise ValueError("disk response storage is one complete capture per directory")
+    if response_directory is None and projected > config.max_response_bytes:
         raise MemoryError("RESOURCE_LIMIT: actor Morlet responses exceed the byte budget")
     signed, signed_mask = _signed_velocity_arrays(skeletons, track_mask, frame_mask, actor_mask)
     results = []
-    for row, (count, length) in enumerate(
-        zip(actor_counts, valid_lengths, strict=True)
-    ):
+    for row, (count, length) in enumerate(zip(actor_counts, valid_lengths, strict=True)):
         values = signed[row, :count, :length].reshape(count, length, 66)
         masks = signed_mask[row, :count, :length].reshape(count, length, 66)
         responses, response_masks, centers = [], [], []
@@ -223,8 +225,22 @@ def _directional_fields_from_arrays(
                 positions = np.zeros(0, dtype=np.float64)
             else:
                 response_count = length - band.length + 1
-                transformed = np.zeros((count, response_count, 22, 3), dtype=np.complex128)
-                valid = np.zeros(transformed.shape, dtype=np.bool_)
+                shape = (count, response_count, 22, 3)
+                if response_directory is None:
+                    transformed = np.zeros(shape, dtype=np.complex128)
+                    valid = np.zeros(shape, dtype=np.bool_)
+                else:
+                    response_path = response_directory / f"response-{band.index}.npy"
+                    mask_path = response_directory / f"response-mask-{band.index}.npy"
+                    # Claim new files exclusively; never overwrite an earlier cache.
+                    response_path.open("xb").close()
+                    mask_path.open("xb").close()
+                    transformed = np.lib.format.open_memmap(
+                        response_path, mode="w+", dtype=np.complex128, shape=shape
+                    )
+                    valid = np.lib.format.open_memmap(
+                        mask_path, mode="w+", dtype=np.bool_, shape=shape
+                    )
                 # Each central response is written once. The input extends by
                 # kernel_length-1 past the response block: full physical halo,
                 # never independent chunk convolution or a shortened kernel.
@@ -243,6 +259,9 @@ def _directional_fields_from_arrays(
                     )
                     valid[:, start:stop] = local_valid
                     transformed[:, start:stop] = np.where(local_valid, local_values, 0.0 + 0.0j)
+                if response_directory is not None:
+                    transformed.flush()
+                    valid.flush()
                 positions = np.arange(length - band.length + 1) + (band.length - 1) / 2
             responses.append(_readonly(np.ascontiguousarray(transformed)))
             response_masks.append(_readonly(np.ascontiguousarray(valid)))

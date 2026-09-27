@@ -79,6 +79,13 @@ class TemporalCoordinationOutput:
     valid_pair_count: Tensor
 
 
+@dataclass(frozen=True)
+class TemporalRelationScores:
+    coordination: TemporalCoordinationOutput
+    cosine: Tensor
+    periodic_support: Tensor
+
+
 class TemporalIncidenceEncoder(nn.Module):
     """Shared endpoint-bound relations followed along their time trajectories."""
 
@@ -211,7 +218,7 @@ class TemporalIncidenceEncoder(nn.Module):
             return checkpoint(function, *inputs, use_reentrant=False)
         return function(*inputs)
 
-    def forward(self, field: DirectionalPhaseField) -> TemporalCoordinationOutput:
+    def _encode_context(self, field: DirectionalPhaseField) -> tuple[Tensor, Tensor, Tensor]:
         device = next(self.parameters()).device
         actor_values = torch.tensor(field.actor_features.copy(), dtype=torch.float32, device=device)
         actor_mask = torch.tensor(field.actor_patch_mask.copy(), device=device)
@@ -257,6 +264,12 @@ class TemporalIncidenceEncoder(nn.Module):
         nodes = torch.where(topology_mask[..., None], nodes, torch.zeros_like(nodes))
         nodes, _ = self.node_temporal(nodes, topology_mask)
         nodes = torch.where(topology_mask[..., None], nodes, torch.zeros_like(nodes))
+        return hidden, nodes, topology_mask
+
+    def _readout(
+        self, field: DirectionalPhaseField, hidden: Tensor, nodes: Tensor, topology_mask: Tensor
+    ) -> TemporalCoordinationOutput:
+        device = hidden.device
         patch_sum = torch.zeros((field.patch_count, self.width), dtype=torch.float64, device=device)
         pair_count = torch.zeros(field.patch_count, dtype=torch.int64, device=device)
         for start in range(0, field.pair_count, 64):
@@ -280,6 +293,92 @@ class TemporalIncidenceEncoder(nn.Module):
             topology_mask,
             pair_count,
         )
+
+    def forward(self, field: DirectionalPhaseField) -> TemporalCoordinationOutput:
+        return self._readout(field, *self._encode_context(field))
+
+    def _directed_text_block(
+        self,
+        field: DirectionalPhaseField,
+        hidden: Tensor,
+        nodes: Tensor,
+        topology_mask: Tensor,
+        text: Tensor,
+        start: int,
+        stop: int,
+    ) -> tuple[Tensor, Tensor]:
+        a, b, endpoints, track_support = self._half_edges(field, hidden, start, stop)
+        left, right = endpoints[:, 0], endpoints[:, 1]
+        eligible = topology_mask[left] | topology_mask[right]
+        # Unlike the unordered pair readout, language packets retain ordered
+        # endpoints: a(i->j), n_i, n_j and b(j->i), n_j, n_i. Both directions
+        # share the same update and temporal weights. No actor IDs enter them.
+        delta_a = self.edge_delta(torch.cat((a, nodes[left], nodes[right]), dim=-1))
+        delta_b = self.edge_delta(torch.cat((b, nodes[right], nodes[left]), dim=-1))
+        delta_a = torch.where(eligible[..., None], delta_a, torch.zeros_like(delta_a))
+        delta_b = torch.where(eligible[..., None], delta_b, torch.zeros_like(delta_b))
+        packets = torch.cat(
+            (a + self.topology_scale.tanh() * delta_a, b + self.topology_scale.tanh() * delta_b)
+        )
+        histories, _ = self.edge_temporal(packets, torch.cat((track_support, track_support)))
+        # Zero-energy observations can carry track context but are not reliable
+        # periodic evidence. Coherence is a feature, never a threshold filter.
+        physical = local_pair_chunk(field, start, stop)
+        observable = torch.tensor(physical.phase_mask.any(axis=-1).copy(), device=hidden.device)
+        observable = observable & track_support
+        language_mask = torch.cat((observable, observable))
+        similarities = F.normalize(histories, dim=-1) @ text.T
+        best = similarities.masked_fill(~language_mask[..., None], -torch.inf).amax(dim=(0, 1))
+        return best, language_mask.any()
+
+    def score_text(
+        self, field: DirectionalPhaseField, text_embeddings: Tensor
+    ) -> TemporalRelationScores:
+        """Stream whole directed packets against whole captions on the full timeline.
+
+        The fixed pre-pilot rule is half ordered-capture cosine, half maximum
+        directed-packet cosine. Both consume the same adapted sentence vector;
+        subject/action/object maxima are never recombined. The maximum covers
+        both endpoint orientations and all observable patches in 64-edge
+        blocks, with backward recomputation. Text/gallery batching is explicit;
+        excessive block score storage fails rather than dropping edges/time.
+        """
+        device = next(self.parameters()).device
+        if (
+            text_embeddings.ndim != 2
+            or text_embeddings.shape[0] == 0
+            or text_embeddings.shape[1] != self.width
+            or text_embeddings.device != device
+            or text_embeddings.dtype != torch.float32
+            or not bool(torch.isfinite(text_embeddings).all())
+        ):
+            raise ValueError("text requires nonempty finite float32[Q,width] on the model device")
+        projected_bytes = (
+            2 * min(64, field.pair_count) * field.patch_count * len(text_embeddings) * 4
+        )
+        if projected_bytes > 512 * 1024**2:
+            raise MemoryError(
+                "RESOURCE_LIMIT: directed relation score block; batch the text gallery"
+            )
+        hidden, nodes, topology_mask = self._encode_context(field)
+        output = self._readout(field, hidden, nodes, topology_mask)
+        text = F.normalize(text_embeddings, dim=-1)
+        best = text.new_full((len(text),), -torch.inf)
+        support = torch.zeros((), dtype=torch.bool, device=device)
+        for start in range(0, field.pair_count, 64):
+            stop = min(field.pair_count, start + 64)
+
+            def text_block(value, node_value, text_value, block_start=start, block_stop=stop):
+                return self._directed_text_block(
+                    field, value, node_value, topology_mask, text_value, block_start, block_stop
+                )
+
+            local_best, local_support = self._run_block(text_block, hidden, nodes, text)
+            best = torch.maximum(best, local_best)
+            support = support | local_support
+        whole_capture = output.embedding @ text.T
+        cosine = torch.where(support, 0.5 * (whole_capture + best), torch.zeros_like(best))
+        return TemporalRelationScores(output, cosine, support)
 
 
 class OrderedCaptureReadout(nn.Module):

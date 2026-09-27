@@ -180,3 +180,107 @@ p50/p95 latency or a GPU cost bound. Floors came from the prior fixed
 one-capture QA fit, **not** the full main/pilot/fold population. No captions,
 final-test input, optimizer or retrieval scores were used. The production
 optimizer/CLIP/counterfactual/baseline host and 87 formal stages remain undone.
+
+## Complete-capture sentence score and loss seam
+
+`continuous_retrieval.ContinuousRetrievalSystem` reuses the fixed 512D B2
+anchor and admitted `FrozenClipTextBatch` receipts. B2 stays frozen and in
+evaluation mode even when the residual system trains. Every accepted window
+is encoded in the same capture frame; its fixed mean supplies only the global
+branch. No legacy base temperature is added to the bounded coordination cosine.
+
+The new shared text adapter is 512 -> GELU -> 512. The coordination encoder
+keeps its original complete ordered actor/node/pair/group histories. For
+language, each **directed** packet retains its ordered half-edge and both
+ordered endpoint node contexts; both orientations share update/temporal
+weights. Complete trajectories are streamed in 64-edge blocks and recomputed
+in backward. Tokens are matched to whole sentence vectors, not independently
+maximized subject/action/object fields. No actor ordinal or lineage ID is a
+neural feature.
+
+The pre-pilot rule is fixed in the experiment matrix:
+`r = 0.5 * ordered_capture_cosine + 0.5 * max_directed_packet_cosine`.
+This bounded weighted local cosine is a scoring implementation, not a fourth
+novelty claim. Group temporal parameters are effective, not dummy capacity.
+Language maxima include only energy-observable patches; zero-energy track
+support can retain history but cannot enable the periodic score. Low coherence
+still does not remove an edge. A capture with no observable periodic evidence
+has exact-zero coordination cosine and falls back to the global branch.
+
+No all-pair packet tensor is retained. A block score matrix over text rows has
+an explicit 512 MiB storage gate; callers must batch a larger gallery, never
+drop actors, edges or time to fit it. Activation, physical-cache and complete
+capture host memory are not constant-memory claims. Actual timing and cost
+must be established in the later hardware profile.
+
+The official holistic schema's **all `scene_explained` human sentence rows**
+are used, without concatenating mood/atmosphere questionnaire fields or
+machine-fusing annotations. Row count is variable. Source capture SHA identifies
+the actual motion input, not its positive-target family. Released siblings can
+share the same parent holistic file. `forward` requires separately admitted
+motion/text positive-family keys and labels all siblings as positives; repeated
+actor sets still do not create positives. Schema selection is not proof of motion observability;
+official file provenance and human relation truth remain separate requirements.
+
+`score` accepts arbitrary gallery/CF sentence batches without assigning any
+positive labels; `forward` adds admitted target-family positives only for a valid
+contrastive batch. A gallery chunk need not contain all matching motion rows,
+and false-CF text is never forced to carry a fabricated positive capture key.
+
+The loss interface requires explicit counterfactual scores and verified-false
+masks. It cannot certify those human labels, and no false negative is invented
+from generic captions. Empty explicit tensors cover implementation-only
+contrastive checks or the no-CF control, not a completed full-CF training run.
+The existing low-level atomic checkpoint and RNG helpers can be reused without
+relaxing the old qualified-winner/execution guards. This new seam does not yet
+claim a formal optimizer scheduler, full corpus calibration, faithful TMR/WaMo/
+MIME adaptations, a trained B2 checkpoint, GPU profile/pilot, verified-CF
+dataset, sealed evaluation or any of the 87 formal training stages.
+
+The expanded server CPU regression passed **164 tests, one CUDA-only skip in
+46.50 seconds**, with unchanged source and invocation files. This includes the
+small synthetic optimizer/save/resume sequence and all prior continuous,
+Morlet and legacy pair checks. The first immutable attempt had 163 passes and
+one overly strict stationary-gradient sign-bit assertion: zero derivatives
+included IEEE negative zero. Only that test was corrected to finite numerical
+zero; the exact-positive-zero score and separate K=2 topology value/gradient
+bit-pattern checks remain strict. The failed attempt is retained, not rewritten
+or counted as a formal training restart.
+
+A real development-only audit found **494 released segments but 253 parent
+capture/holistic annotation families**. Exactly 138 families repeat across
+segments; each file family maps to one parent stem, with no cross-component or
+train/validation family duplication. The 494 files contain 2,613 sentence rows
+including these copies (2,144 train, 469 validation); their per-segment row-count
+histogram is 1:2, 4:20, 5:437, 9:4, 10:31. These are not 2,613 independent human
+annotations. Final-test captions were not read.
+
+The first native qualification's two segments shared a holistic file; its
+finite backward was an execution check, not valid evidence of independent
+retrieval targets. This prompted the explicit positive-family interface before
+formal training. Parent-level motion/task aggregation, deduplicated gallery,
+positive mapping, independent sampling/statistics and effective-test sealing
+still require a unified contract freeze. Existing per-segment caches are input
+artifacts, not proof that that task is closed. Do not treat sibling segments as
+false negatives, bootstrap them as independent parent captures, invent a split
+leak, change the participant-disjoint split, or concatenate missing time away.
+
+After separating source and positive-family identities, the fresh server suite
+again passed **164 tests, one CUDA-only skip in 46.98 seconds** with unchanged
+source/invocation. Two **different** real C01 annotation families then passed
+actual frozen-CLIP, complete **120/260-second** motion, all **12/26** accepted
+base windows, **119/259** ordered patches, 10 human sentences and untrained
+512D forward/backward in **151.26 seconds** total. All 55 trainable gradient
+tensors were finite, required branches had nonzero gradients, frozen B2 stayed
+unchanged, and the original group readout remained bitwise identical to the
+previous qualified source in this runtime. Forward/backward were 51.69/71.94
+seconds; peak RSS was 1,856,512 KiB. This is CPU execution qualification, not a
+GPU throughput profile or retrieval result.
+
+The same real-file audit counted **1,334 human answer-row slots when each
+annotation family is counted once**, not 2,613 independent annotations and not
+1,334 independently verified relation examples. No text truncation occurred in
+this two-family check. It used one-capture QA floors and random untrained B2:
+zero optimizer, pilot, formal, verified-CF and final-test runs. Complete parent
+task admission, true human relation evidence and the 87-stage study remain
+unfinished; their pending state must not be replaced by this qualification.

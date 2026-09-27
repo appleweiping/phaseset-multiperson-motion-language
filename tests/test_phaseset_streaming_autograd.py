@@ -235,12 +235,30 @@ def test_public_full_forward_and_all_parameter_gradients_match_eager_oracle(
         torch.testing.assert_close(actual.grad, expected.grad, rtol=5e-5, atol=5e-6)
 
 
+@torch.backends.mkldnn.flags(enabled=False)
 def test_cpu_bfloat16_autocast_is_replayed_during_streaming_backward() -> None:
+    # Exercise autocast replay with portable ATen BF16 kernels, not an ISA-specific
+    # oneDNN primitive. The scoped decorator restores the backend even on failure;
+    # other tests and the server's native BF16 qualification keep their backend.
+    assert not torch.backends.mkldnn.enabled
     batch = _activity_batch(4)
     torch.manual_seed(1729)
     oracle_model = PhaseSetEncoder(embedding_dim=8, hidden_dim=12).train()
     streamed_model = PhaseSetEncoder(embedding_dim=8, hidden_dim=12).train()
     streamed_model.load_state_dict(oracle_model.state_dict())
+    observed_dtypes: list[torch.dtype] = []
+
+    def observe_bf16(
+        module: torch.nn.Module,
+        inputs: tuple[torch.Tensor, ...],
+        output: torch.Tensor,
+    ) -> None:
+        observed_dtypes.append(output.dtype)
+        assert output.dtype == torch.bfloat16
+
+    for model in (oracle_model, streamed_model):
+        model.half_edge_encoder.register_forward_hook(observe_bf16)
+        model.pair_encoder.register_forward_hook(observe_bf16)
     with torch.autocast("cpu", dtype=torch.bfloat16):
         oracle = eager_edge_summaries(
             oracle_model,
@@ -263,6 +281,7 @@ def test_cpu_bfloat16_autocast_is_replayed_during_streaming_backward() -> None:
     assert torch.equal(oracle.node_statistics, streamed.node_statistics)
     oracle_loss.backward()
     streamed_loss.backward()
+    assert len(observed_dtypes) >= 12  # Both forwards and both streaming replays.
     for (expected_name, expected), (actual_name, actual) in zip(
         oracle_model.named_parameters(),
         streamed_model.named_parameters(),

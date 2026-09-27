@@ -38,6 +38,7 @@ from .frozen_clip_text import (
     FrozenClipTextBatch,
     FrozenClipTextReceipt,
     FrozenClipTextRowSelectionReceipt,
+    FrozenClipTextRowPoolReceipt,
 )
 from .objectives import variable_positive_symmetric_infonce
 from .periodic_descriptor_cache_v2 import DescriptorWindowContext
@@ -156,6 +157,8 @@ def _validate_text_batch(
     if len(set(commitments)) != count:
         raise CaptureValidationError("caption commitments must be unique within a capture")
     selected = type(receipt) is FrozenClipTextRowSelectionReceipt
+    pooled = type(receipt) is FrozenClipTextRowPoolReceipt
+    derived = selected or pooled
     if selected:
         if not allow_row_selection or (
             receipt.schema != "phaseset-frozen-clip-row-selection-v1"
@@ -182,6 +185,48 @@ def _validate_text_batch(
             )
         ):
             raise CaptureValidationError("derived frozen text selection ancestry differs")
+    elif pooled:
+        if not allow_row_selection or (
+            receipt.schema != "phaseset-frozen-clip-row-pool-v1"
+            or receipt.status != "ROW_POOL_AUTHORITY0"
+        ):
+            raise CaptureValidationError("derived frozen text pool is not admitted here")
+        origins, selections = receipt.origin_receipts, receipt.selected_indices
+        if (
+            type(origins) is not tuple
+            or len(origins) != 2
+            or type(selections) is not tuple
+            or len(selections) != 2
+        ):
+            raise CaptureValidationError("derived frozen text pool ancestry differs")
+        rows = []
+        for origin, indices in zip(origins, selections, strict=True):
+            if (
+                type(origin) is not FrozenClipTextReceipt
+                or origin.schema != "phaseset-frozen-clip-text-receipt-v1"
+                or origin.status != "ENCODED_AUTHORITY0"
+                or type(indices) is not tuple
+                or not indices
+                or any(type(i) is not int or not 0 <= i < len(origin.caption_rows) for i in indices)
+                or len(set(indices)) != len(indices)
+            ):
+                raise CaptureValidationError("derived frozen text pool ancestry differs")
+            rows.extend(origin.caption_rows[i] for i in indices)
+        if (
+            type(receipt.prefix_count) is not int
+            or receipt.prefix_count != len(selections[0])
+            or len(rows) != count
+            or receipt.caption_rows != tuple((i, *row[1:]) for i, row in enumerate(rows))
+            or any(
+                getattr(origins[0], identity) != getattr(origins[1], identity)
+                for identity in (
+                    "snapshot_manifest_sha256",
+                    "live_model_manifest_sha256",
+                    "runtime_manifest_sha256",
+                )
+            )
+        ):
+            raise CaptureValidationError("derived frozen text pool ancestry differs")
     else:
         if type(receipt) is not FrozenClipTextReceipt:
             raise CaptureValidationError("frozen text receipt type is invalid")
@@ -197,7 +242,7 @@ def _validate_text_batch(
         or receipt.output_sha256 != _sha256(raw)
     ):
         raise CaptureValidationError("frozen text output differs from its receipt")
-    if not selected and (type(receipt.batch_size) is not int or receipt.batch_size < 1):
+    if not derived and (type(receipt.batch_size) is not int or receipt.batch_size < 1):
         raise CaptureValidationError("frozen text receipt batch size is invalid")
     if type(receipt.caption_rows) is not tuple or len(receipt.caption_rows) != count:
         raise CaptureValidationError("frozen text receipt caption census is invalid")
@@ -209,10 +254,10 @@ def _validate_text_batch(
         row_raw = _tensor_bytes(embeddings[index : index + 1].contiguous())
         if row[8] != _sha256(row_raw):
             raise CaptureValidationError("frozen text receipt row digest mismatch")
-    if not selected and (type(receipt.chunk_ranges) is not tuple or not receipt.chunk_ranges):
+    if not derived and (type(receipt.chunk_ranges) is not tuple or not receipt.chunk_ranges):
         raise CaptureValidationError("frozen text receipt chunk census is invalid")
     position = 0
-    for chunk in () if selected else receipt.chunk_ranges:
+    for chunk in () if derived else receipt.chunk_ranges:
         if (
             type(chunk) is not tuple
             or len(chunk) != 2
@@ -224,7 +269,7 @@ def _validate_text_batch(
         ):
             raise CaptureValidationError("frozen text receipt chunks do not partition rows")
         position = chunk[1]
-    if not selected and position != count:
+    if not derived and position != count:
         raise CaptureValidationError("frozen text receipt chunks do not cover all rows")
     try:
         receipt_sha256 = _lower_sha256(receipt.sha256, "frozen text receipt SHA-256")

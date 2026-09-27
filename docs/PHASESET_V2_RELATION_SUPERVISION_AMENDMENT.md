@@ -29,8 +29,9 @@ pilot/训练前一次冻结；保留机器来源、原人工文本依据、输�
 明确披露的弱训练监督。full 与适用的机制对照使用相同弱监督池和预算，A8
 仍关闭 CF 目标；不可将机器推断塞进原 human-only `verified_false=True`
 接口。独立弱标签类型、loss、完整 parent backward 及事件计数已经实现，
-并通过 [37 项服务器软件检查](PHASESET_V2_WEAK_CF_TRAINING_SEAM.md)；原真实
-人工接口与旧测试保留。**实际弱 CF 生成、冻结训练池和来源准入仍待完成**，
+并通过 [37 项服务器软件检查](PHASESET_V2_WEAK_CF_TRAINING_SEAM.md)；缓存
+训练-only文本池通过 [另外 24 项检查](PHASESET_V2_WEAK_CLIP_POOL.md)，原真实
+人工接口与旧测试保留。**实际弱 CF 生成、真实文本编码池和来源准入仍待完成**，
 不能据此宣称正式训练已启动。无 CF 的基础模型与独立开发工作不再等新真人。
 
 ## 评估与结论边界

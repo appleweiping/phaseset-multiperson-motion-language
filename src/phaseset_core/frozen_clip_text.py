@@ -940,7 +940,9 @@ class FrozenClipTextBatch:
         self,
         embeddings: Any,
         lineage: tuple[bytes, ...],
-        receipt: FrozenClipTextReceipt | FrozenClipTextRowSelectionReceipt,
+        receipt: FrozenClipTextReceipt
+        | FrozenClipTextRowSelectionReceipt
+        | FrozenClipTextRowPoolReceipt,
         *,
         _seal: object,
     ) -> None:
@@ -959,7 +961,9 @@ class FrozenClipTextBatch:
         return self.__lineage
 
     @property
-    def receipt(self) -> FrozenClipTextReceipt | FrozenClipTextRowSelectionReceipt:
+    def receipt(
+        self,
+    ) -> FrozenClipTextReceipt | FrozenClipTextRowSelectionReceipt | FrozenClipTextRowPoolReceipt:
         return self.__receipt
 
     def __repr__(self) -> str:
@@ -1026,6 +1030,106 @@ class FrozenClipTextRowSelectionReceipt:
     @property
     def sha256(self) -> str:
         return hashlib.sha256(self.canonical_json_bytes()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenClipTextRowPoolReceipt:
+    """Two original cached row selections, never a new encoder invocation.
+
+    The prefix stays bitwise unchanged. Persist both originals and reselect;
+    the original-batch rehydrator deliberately rejects this derived schema.
+    Prefix/extra roles are supplied by the caller, not ground-truth authority.
+    """
+
+    origin_receipts: tuple[FrozenClipTextReceipt, FrozenClipTextReceipt]
+    selected_indices: tuple[tuple[int, ...], tuple[int, ...]]
+    prefix_count: int
+    caption_rows: tuple[tuple[int, str, str, int, int, bool, str, str, str], ...]
+    output_bytes: int
+    output_sha256: str
+    output_shape: tuple[int, int]
+    output_stride: tuple[int, int]
+    schema: str = "phaseset-frozen-clip-row-pool-v1"
+    status: str = "ROW_POOL_AUTHORITY0"
+
+    def to_public_dict(self) -> dict[str, object]:
+        return {
+            "authority": AUTHORITY,
+            "production": PRODUCTION,
+            "training_authorized": TRAINING_AUTHORIZED,
+            "schema": self.schema,
+            "status": self.status,
+            "operation": "ordered_cached_rows_from_two_originals_no_encoder_call",
+            "origin_receipt_sha256": [origin.sha256 for origin in self.origin_receipts],
+            "selected_indices": [list(indices) for indices in self.selected_indices],
+            "prefix_count": self.prefix_count,
+            "caption_rows": [list(row) for row in self.caption_rows],
+            "model_id": MODEL_ID,
+            "revision": REVISION,
+            "method_id": METHOD_ID,
+            "output": {
+                "bytes": self.output_bytes,
+                "sha256": self.output_sha256,
+                "shape": list(self.output_shape),
+                "stride": list(self.output_stride),
+                "dtype": "torch.float32",
+                "device": "cpu",
+                "requires_grad": False,
+            },
+        }
+
+    def canonical_json_bytes(self) -> bytes:
+        return _canonical_json(self.to_public_dict()) + b"\n"
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.canonical_json_bytes()).hexdigest()
+
+
+def pool_frozen_clip_text_rows(
+    prefix_original: FrozenClipTextBatch,
+    extra_original: FrozenClipTextBatch,
+    *,
+    prefix_indices: tuple[int, ...],
+    extra_indices: tuple[int, ...],
+) -> FrozenClipTextBatch:
+    """Append authenticated cached rows without re-encoding the frozen prefix.
+
+    Both inputs must be original encoded/rehydrated batches of the same live
+    model, snapshot and numerical runtime. Their separate source/encoding
+    receipts are retained; no synthetic combined encoder receipt is invented.
+    """
+    import torch
+
+    prefix = select_frozen_clip_text_rows(prefix_original, prefix_indices)
+    extra = select_frozen_clip_text_rows(extra_original, extra_indices)
+    origins = (prefix_original.receipt, extra_original.receipt)
+    for identity in (
+        "snapshot_manifest_sha256",
+        "live_model_manifest_sha256",
+        "runtime_manifest_sha256",
+    ):
+        if getattr(origins[0], identity) != getattr(origins[1], identity):
+            raise ValueError("cached text pool requires the same model, snapshot and runtime")
+    lineage = prefix.caption_commitments + extra.caption_commitments
+    if len(set(lineage)) != len(lineage):
+        raise ValueError("cached text pool cannot repeat a caption commitment")
+    embeddings = torch.cat((prefix.embeddings, extra.embeddings)).contiguous()
+    raw = _tensor_bytes(embeddings)
+    receipt = FrozenClipTextRowPoolReceipt(
+        origin_receipts=origins,
+        selected_indices=(prefix_indices, extra_indices),
+        prefix_count=len(prefix_indices),
+        caption_rows=tuple(
+            (index, *row[1:])
+            for index, row in enumerate(prefix.receipt.caption_rows + extra.receipt.caption_rows)
+        ),
+        output_bytes=len(raw),
+        output_sha256=hashlib.sha256(raw).hexdigest(),
+        output_shape=tuple(embeddings.shape),
+        output_stride=tuple(embeddings.stride()),
+    )
+    return FrozenClipTextBatch(embeddings, lineage, receipt, _seal=_CONSTRUCTION_SEAL)
 
 
 def select_frozen_clip_text_rows(
@@ -1999,6 +2103,7 @@ __all__ = [
     "FrozenClipTextBatch",
     "FrozenClipTextReceipt",
     "FrozenClipTextRowSelectionReceipt",
+    "FrozenClipTextRowPoolReceipt",
     "MAX_BATCH_SIZE",
     "MAX_CAPTIONS",
     "METHOD_ID",
@@ -2009,4 +2114,5 @@ __all__ = [
     "load_frozen_clip_text_adapter",
     "rehydrate_frozen_clip_text_batch",
     "select_frozen_clip_text_rows",
+    "pool_frozen_clip_text_rows",
 ]

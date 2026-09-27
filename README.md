@@ -49,8 +49,10 @@ uses existing official human retrieval annotations and permits separately
 disclosed weak machine supervision; no new human annotators are awaited.
 Machine labels are not independent motion ground truth or human-challenge
 success. The [separate weak-CF loss/backward seam](docs/PHASESET_V2_WEAK_CF_TRAINING_SEAM.md)
-has passed 37 scoped server checks; the actual generated training pool and its
-provenance are still pending. This is not a completed native training run.
+has passed 37 scoped server checks, and the
+[cached training-only weak text pool](docs/PHASESET_V2_WEAK_CLIP_POOL.md) has passed
+24 additional scoped checks. Actual generation, encoded weak text and private
+provenance admission remain pending. Neither is a completed native training run.
 
 A [complete-native-parent CPU profile](docs/PHASESET_V2_NATIVE_PROCESS_PROFILE.md)
 has now passed through the production lifecycle and journal: both 512-D systems,

@@ -19,6 +19,7 @@ from .continuous_capture_io import load_prepared_continuous_capture
 from .continuous_training_input import ContinuousTrainingInput, shared_yaw_capture
 from .parent_retrieval_task import ParentCaptionRecord, ParentRetrievalTask
 from .parent_clip_rows import ParentHumanClipRows
+from .parent_weak_clip_rows import ParentWeakClipRows
 from .tmr_feature_cache import FrozenTMRRowCache, caption_key
 from .training import OFFICIAL_SEEDS
 
@@ -73,6 +74,7 @@ class DevelopmentParentDiskSource:
         language_rows: FrozenTMRRowCache,
         energy_floors: np.ndarray | None = None,
         human_clip_rows: ParentHumanClipRows | None = None,
+        weak_clip_rows: ParentWeakClipRows | None = None,
     ):
         if type(task) is not ParentRetrievalTask or any(
             type(record) is not ParentDiskRecord for record in records
@@ -123,6 +125,12 @@ class DevelopmentParentDiskSource:
         ):
             raise ValueError("human CLIP rows must cover the same complete development task")
         self.human_clip_rows = human_clip_rows
+        if weak_clip_rows is not None and (
+            type(weak_clip_rows) is not ParentWeakClipRows
+            or weak_clip_rows.human is not human_clip_rows
+        ):
+            raise ValueError("weak rows must use the same admitted human row provider")
+        self.weak_clip_rows = weak_clip_rows
 
     def _record_and_yaw(self, parent, *, seed, epoch, training):
         if type(parent) is not ParentCaptionRecord or (
@@ -168,9 +176,10 @@ class DevelopmentParentDiskSource:
         return self.language_rows.wamo_cls(captions)
 
     def text(self, labels, *, training):
-        """Human-only source seam; never turn absent CF annotations into truth."""
+        """Original human evaluation; separately admitted weak training pool."""
         if self.human_clip_rows is None:
             raise ValueError(
                 "base/V2 human text requires the closed original CLIP preparation batch"
             )
-        return self.human_clip_rows.text(labels, training=training)
+        provider = self.weak_clip_rows if self.weak_clip_rows is not None else self.human_clip_rows
+        return provider.text(labels, training=training)

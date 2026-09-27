@@ -202,6 +202,10 @@ class ContinuousParentTrainingHost:
             raise ValueError("host stage does not match the actual scorer")
         if (bindings.frozen_base_checkpoint_sha256 is None) != self._is_base:
             raise ValueError("only a residual stage binds a frozen B2 checkpoint")
+        self._initialize(system, task, source, config, bindings)
+
+    def _initialize(self, system, task, source, config, bindings):
+        """Shared optimizer/checkpoint loop; public constructors admit scorers."""
         if any(parameter.dtype != torch.float32 for parameter in system.parameters()):
             raise ValueError("this host has only been qualified for FP32")
         self.system, self.task, self.source = system, task, source
@@ -279,6 +283,22 @@ class ContinuousParentTrainingHost:
             batch_size=self.config.parent_batch_size,
             seed=self.config.seed,
             epoch=epoch,
+        )
+
+    def _backward_batch(self, labels: ParentRetrievalBatch):
+        by_source = {row.source_sha256: row for row in labels.parents}
+        text, cf = self.source.text(labels, training=True)
+        return backward_loaded_parent_batch(
+            self.system,
+            labels,
+            text,
+            load_view=lambda key: self.source.view(
+                by_source[key], seed=self.config.seed, epoch=self._epoch, training=True
+            ),
+            counterfactuals=cf,
+            cf_weight=self.config.cf_weight,
+            margin=self.config.cf_margin,
+            progress=lambda phase, index: self._event(phase, capture_index=index),
         )
 
     def _event(self, phase: str, **fields):
@@ -520,20 +540,7 @@ class ContinuousParentTrainingHost:
                     if stop_after_steps is not None and self._step == stop_after_steps:
                         break
                     labels = batches[self._offset]
-                    by_source = {row.source_sha256: row for row in labels.parents}
-                    text, cf = self.source.text(labels, training=True)
-                    result = backward_loaded_parent_batch(
-                        self.system,
-                        labels,
-                        text,
-                        load_view=lambda key: self.source.view(
-                            by_source[key], seed=self.config.seed, epoch=self._epoch, training=True
-                        ),
-                        counterfactuals=cf,
-                        cf_weight=self.config.cf_weight,
-                        margin=self.config.cf_margin,
-                        progress=lambda phase, index: self._event(phase, capture_index=index),
-                    )
+                    result = self._backward_batch(labels)
                     norm = torch.nn.utils.clip_grad_norm_(
                         self._parameters, 1.0, error_if_nonfinite=True
                     )

@@ -67,6 +67,11 @@ The separate [TMR VAE parent backward seam](docs/PHASESET_V2_TMR_PARENT_TRAINING
 preserves the original stochastic order, both full-track reconstructions,
 all four KL terms, latent alignment and filtered full-batch negatives; it does
 not route TMR through a generic contrastive-only objective.
+The [literature optimizer host](docs/PHASESET_V2_LITERATURE_PARENT_HOST.md)
+shares the full-parent AdamW, validation selection and checkpoint/resume loop,
+while keeping each baseline's original objective. Analytic optimizer/resume
+checks and native dense-gradient replay are distinct from a native training
+pilot or converged baseline result.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

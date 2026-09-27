@@ -34,6 +34,9 @@ clip = [
   "requests==2.34.2",
   "transformers==4.57.3",
 ]
+tmr-language = [
+  "transformers==4.57.3",
+]
 embody = [
   "smplx==0.1.28",
 ]

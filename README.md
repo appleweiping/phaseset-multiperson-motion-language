@@ -47,13 +47,18 @@ phase, time-varying actor–edge incidence, chronological capture readout, and
 verified counterfactual coordination supervision. The
 [87-stage matrix](configs/phaseset_v2_experiment_matrix.json) supersedes the
 affected legacy 33-run plan. New modules are independent research APIs; the
-formal V2 host runner and literature reproductions are not yet implemented.
+production V2 training-host integration and converged literature reproductions
+are not yet qualified. [TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
+complete original VAE objectives with disclosed full-parent group adaptation;
+its pinned frozen language loader is not a substitute for native learning.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.
 There are still **0/87 formal V2 stages** and no native-data retrieval result.
-Missing approved main data, licensed body-model assets, exact handoff fold
-assignments, and human relational verification are explicit dependencies.
+Approved main-data and licensed body-model assets have been obtained privately,
+and the handoff fold assignments have been recovered. Whole-parent preprocessing,
+run-specific admission, faithful baseline training, resource profiling, and real
+human relational verification still require actual execution evidence.
 The descriptions and score equation below document the preserved V1 core,
 not completed V2 experiments or a submission-ready paper.
 

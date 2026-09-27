@@ -366,7 +366,9 @@ finally:
         text=True,
     )
     try:
-        deadline = time.monotonic() + 10.0
+        # A cold Torch import on a shared Windows runner can exceed 10s. This
+        # bounds process startup, not the live-lease exclusion check below.
+        deadline = time.monotonic() + 30.0
         while not ready.is_file() and time.monotonic() < deadline:
             if child.poll() is not None:
                 _, stderr = child.communicate(timeout=1.0)

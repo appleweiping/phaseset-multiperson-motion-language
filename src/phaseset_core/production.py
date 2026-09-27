@@ -138,6 +138,17 @@ _SEMANTIC_MODULE_FUNCTION_IDENTITIES = tuple(
     for name, value in sorted(vars(module).items())
     if isinstance(value, types.FunctionType) and value.__module__ == module.__name__
 )
+# Python 3.12 lazily adds this interpreter metadata on ordinary annotation
+# inspection. Materialize it before the census so introspection is not mistaken
+# for an injected semantic global; its binding remains protected like all others.
+for _semantic_module in (
+    evaluation_module,
+    statistics_module,
+    experiments_module,
+    publication_module,
+):
+    vars(_semantic_module).setdefault("__annotations__", {})
+del _semantic_module
 _SEMANTIC_MODULE_GLOBAL_NAME_CENSUS = tuple(
     (module, frozenset(vars(module)))
     for module in (

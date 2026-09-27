@@ -1017,6 +1017,16 @@ def test_completed_publication_render_is_sealed_content_bound_and_authorized(
     assert backend.publication_auth_calls == 1
 
 
+def test_annotation_introspection_does_not_inject_a_semantic_global():
+    import inspect
+
+    for module in (evaluation, statistics, experiments, publication):
+        before = set(vars(module))
+        inspect.get_annotations(module)
+        assert set(vars(module)) == before
+    production._assert_semantic_function_integrity()
+
+
 def test_semantic_helper_monkeypatch_is_rejected_before_recomputation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

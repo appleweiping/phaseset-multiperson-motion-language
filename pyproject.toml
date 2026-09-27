@@ -9,6 +9,7 @@ description = "Permutation-invariant periodic relation tokens for multi-person m
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "MIT"
+license-files = ["LICENSE", "LICENSE_TMR.md"]
 authors = [{ name = "PhaseSet contributors" }]
 dependencies = [
   "numpy==2.4.6",

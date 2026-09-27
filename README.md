@@ -51,6 +51,10 @@ production V2 training-host integration and converged literature reproductions
 are not yet qualified. [TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
 complete original VAE objectives with disclosed full-parent group adaptation;
 its pinned frozen language loader is not a substitute for native learning.
+[WaMo-Set](docs/WAMO_SET_ADAPTATION.md) implements learnable stationary analysis
+and inverse wavelets, both reconstruction branches and original/shuffled-frame
+ordering, with explicit full-parent group adaptation and unpublished-detail
+choices. Its software qualification is not converged baseline training.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

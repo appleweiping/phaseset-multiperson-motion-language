@@ -1,4 +1,4 @@
-# Complete-parent residual training host
+# Complete-parent base and residual training host
 
 `continuous_parent_host.py` connects the qualified full-gallery gradient replay
 to real FP32 AdamW updates, checkpoint selection and restart. It is not the old
@@ -17,6 +17,23 @@ The source must reproduce the same shared-yaw transform during replay, and
 respect the pre-admitted language/yaw rule. No shorter timeline or physical
 batch materialization is introduced by the host.
 
+For a **base** stage, the source returns `PreparedContinuousCapture` directly,
+not a fabricated residual view. `ContinuousBaseRetrievalSystem` reuses B0/B1/B2
+without shrinking their registered architectures. Every accepted window is
+encoded in absolute order, then pooled with the same fixed float64 mean and
+float32 L2 normalization as the residual's global anchor. The base encoder and
+its bounded logit temperature are trainable; no text adapter, phase cache,
+physical floor, coordination evidence or learned window pool is added.
+Non-reentrant window checkpointing preserves dropout RNG and binds each actual
+window to its own replay closure. The checkpoint invocation includes an
+explicit tensor on the model's device so
+CUDA RNG is discoverable; closure-only parameters would not provide that.
+CPU invocation checks do not qualify CUDA numerical gradients. It bounds
+stored neural activations, not the
+size of the complete physical skeleton input. Native memory/cost qualification
+is still required. The outer full-gallery parent-score replay is shared by
+base and residual stages; the architectures and input types are not conflated.
+
 The effective batch is selected by explicit learning components and includes
 all official human holistic rows of every parent. Only the B-by-Q score matrix
 and RNG snapshots are cached. The full variable-positive symmetric objective
@@ -29,12 +46,19 @@ Optional CF sentences follow the human retrieval prefix. Their columns have no
 fabricated retrieval positive. A verified-false bit is not human provenance:
 the private manifest must bind the actual blind two-human records. Unverified
 CFs contribute no CF term. No label generation or data discovery occurs here.
+Base stages reject CF rows, extra text columns and any CF weight. They optimize
+only the existing variable-positive symmetric retrieval InfoNCE.
 
 Optimizer: AdamW, weight decay 0.01, clipping 1.0, 5% warmup followed by cosine
 decay, default residual learning rate 3e-4 and 20 complete epochs. Seeds remain
 1729, 2718 and 31415. Batch size is explicitly **parents**, not 128 windows.
 The short qualification schedules are not the formal/pilot freeze. There is
 no automatic BF16 fallback; FP32 is the only supported path in this host.
+`ParentHostConfig.for_base` explicitly sets the distinct base defaults:
+30 epochs, learning rate 2e-4, zero CF loss and `stage="base"`. The stage must
+match the actual scorer. A base has no frozen-anchor checkpoint binding;
+residual stages still require that exact frozen B2 binding and enforce its
+unchanged state. No checkpoint produced by a fixture is a qualified base.
 
 ## Validation and selection
 
@@ -84,7 +108,10 @@ manifests, checkpoints, caption text or licensed physical cache files.
 
 ## Qualification scope
 
-Tests exercise the real host optimizer loop on clearly identified analytic
+Tests exercise actual registered 512D B0/B1/B2 forward and all-parameter
+checkpointed backward with active dropout, plus an independent per-window
+pooling oracle. Separate, clearly marked analytic fixtures exercise the real
+base/residual host optimizer loop,
 fixtures, full gallery/caption census, first-best selection, bitwise
 uninterrupted-versus-resumed model/optimizer/scheduler/RNG, zero/mid/end/completed
 resume, concrete input drift, truncated checkpoints and wrong progress cursor.

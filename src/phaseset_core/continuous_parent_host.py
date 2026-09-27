@@ -1,10 +1,10 @@
-"""Complete-parent FP32 residual optimizer, validation and restart host.
+"""Complete-parent FP32 base/residual optimizer, validation and restart host.
 
 This runs real updates, not the superseded window-unit training recipe. The
 private operator still admits rights, physical floors, human CF provenance,
 hardware/budget and the dated 87-stage matrix. Constructing this host supplies
-none of those authorities. Base-model training and literature baselines are
-separate implementations. No final-test interface exists here.
+none of those authorities. Literature baselines remain separate implementations.
+No final-test interface exists here.
 """
 
 from __future__ import annotations
@@ -20,10 +20,13 @@ from typing import Protocol
 import numpy as np
 import torch
 
+from .continuous_base_retrieval import ContinuousBaseRetrievalSystem
+from .continuous_capture import PreparedContinuousCapture
 from .continuous_parent_training import (
     ParentCounterfactualRows,
     backward_loaded_parent_batch,
     parent_epoch_batches,
+    parent_input_capture,
     validate_parent_text_batch,
 )
 from .continuous_retrieval import ContinuousRetrievalSystem
@@ -57,7 +60,7 @@ class ParentTrainingSource(Protocol):
 
     def view(
         self, parent: ParentCaptionRecord, *, seed: int, epoch: int, training: bool
-    ) -> ContinuousTrainingView: ...
+    ) -> ContinuousTrainingView | PreparedContinuousCapture: ...
 
     def text(
         self, labels: ParentRetrievalBatch, *, training: bool
@@ -74,6 +77,30 @@ class ParentHostConfig:
     learning_rate: float = 3e-4
     cf_weight: float = 0.2
     cf_margin: float = 0.2
+    stage: str = "residual"
+
+    @classmethod
+    def for_base(
+        cls,
+        seed: int,
+        train_components: tuple[str, ...],
+        validation_components: tuple[str, ...],
+        **settings,
+    ):
+        """Explicit base defaults; short qualifications are not a study freeze."""
+        return cls(
+            seed,
+            train_components,
+            validation_components,
+            **{
+                "epochs": 30,
+                "learning_rate": 2e-4,
+                "cf_weight": 0.0,
+                "cf_margin": 0.0,
+                "stage": "base",
+                **settings,
+            },
+        )
 
     def __post_init__(self):
         if type(self.seed) is not int or self.seed not in OFFICIAL_SEEDS:
@@ -97,6 +124,10 @@ class ParentHostConfig:
                 raise ValueError("loss/optimizer scalars must be finite nonnegative numbers")
         if self.learning_rate == 0:
             raise ValueError("learning rate must be positive")
+        if self.stage not in ("base", "residual"):
+            raise ValueError("host stage must explicitly be base or residual")
+        if self.stage == "base" and (self.cf_weight != 0 or self.cf_margin != 0):
+            raise ValueError("a base stage has no CF loss")
 
 
 @dataclass(frozen=True)
@@ -112,10 +143,12 @@ class ParentHostBindings:
     input_manifest_sha256: str
     code_manifest_sha256: str
     runtime_sha256: str
-    frozen_base_checkpoint_sha256: str
+    frozen_base_checkpoint_sha256: str | None
 
     def __post_init__(self):
-        for value in asdict(self).values():
+        for name, value in asdict(self).items():
+            if name == "frozen_base_checkpoint_sha256" and value is None:
+                continue
             if (
                 type(value) is not str
                 or len(value) != 64
@@ -156,14 +189,19 @@ class ContinuousParentTrainingHost:
 
     def __init__(
         self,
-        system: ContinuousRetrievalSystem,
+        system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem,
         task: ParentRetrievalTask,
         source: ParentTrainingSource,
         config: ParentHostConfig,
         bindings: ParentHostBindings,
     ):
-        if not isinstance(system, ContinuousRetrievalSystem):
-            raise TypeError("this host is for the complete-parent V2 residual scorer")
+        if not isinstance(system, (ContinuousRetrievalSystem, ContinuousBaseRetrievalSystem)):
+            raise TypeError("this host requires an actual complete-parent base or V2 scorer")
+        self._is_base = isinstance(system, ContinuousBaseRetrievalSystem)
+        if config.stage != ("base" if self._is_base else "residual"):
+            raise ValueError("host stage does not match the actual scorer")
+        if (bindings.frozen_base_checkpoint_sha256 is None) != self._is_base:
+            raise ValueError("only a residual stage binds a frozen B2 checkpoint")
         if any(parameter.dtype != torch.float32 for parameter in system.parameters()):
             raise ValueError("this host has only been qualified for FP32")
         self.system, self.task, self.source = system, task, source
@@ -182,9 +220,13 @@ class ContinuousParentTrainingHost:
         self._parameters = [
             parameter for parameter in system.parameters() if parameter.requires_grad
         ]
-        if not self._parameters or any(p.requires_grad for p in system.frozen_b2.parameters()):
+        if not self._parameters or (
+            not self._is_base and any(p.requires_grad for p in system.frozen_b2.parameters())
+        ):
             raise ValueError("the residual must be trainable and its B2 anchor frozen")
-        self._base_state = _stable_hash(system.frozen_b2.state_dict())
+        if self._is_base and any(not p.requires_grad for p in system.parameters()):
+            raise ValueError("base-learning parameters must all remain trainable")
+        self._base_state = None if self._is_base else _stable_hash(system.frozen_b2.state_dict())
         self._manifest = {
             "schema": "phaseset-complete-parent-host-v1",
             "bindings": asdict(bindings),
@@ -271,12 +313,11 @@ class ContinuousParentTrainingHost:
                 view = self.source.view(
                     parent, seed=self.config.seed, epoch=self._epoch, training=False
                 )
-                if view.positive_capture_key != parent.source_sha256 or (
-                    view.capture.augmentation_yaw != 0.0
-                ):
+                capture = parent_input_capture(self.system, view)
+                if capture.source_sha256 != parent.source_sha256 or capture.augmentation_yaw != 0.0:
                     raise ValueError("validation requires the admitted unaugmented whole source")
                 scores.append(self.system.score((view,), text).scores.detach().cpu())
-                del view
+                del view, capture
             logits = torch.cat(scores).contiguous()
             if logits.shape != (len(labels.parents), len(labels.captions)) or not bool(
                 torch.isfinite(logits).all()
@@ -363,7 +404,7 @@ class ContinuousParentTrainingHost:
             for key, value in model.items()
             if key.startswith("frozen_b2.")
         }
-        if _stable_hash(base) != self._base_state or any(
+        if (not self._is_base and _stable_hash(base) != self._base_state) or any(
             not bool(torch.isfinite(value).all()) for value in model.values()
         ):
             raise TrainingCheckpointError("parent checkpoint changed the anchor or is nonfinite")
@@ -499,7 +540,10 @@ class ContinuousParentTrainingHost:
                     lr = self._optimizer.param_groups[0]["lr"]
                     self._optimizer.step()
                     self._scheduler.step()
-                    if _stable_hash(self.system.frozen_b2.state_dict()) != self._base_state:
+                    if (
+                        not self._is_base
+                        and _stable_hash(self.system.frozen_b2.state_dict()) != self._base_state
+                    ):
                         raise RuntimeError("training mutated the shared frozen B2 anchor")
                     self._step += 1
                     self._offset += 1

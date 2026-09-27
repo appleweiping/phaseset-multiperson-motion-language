@@ -18,9 +18,12 @@ import torch
 from torch import Tensor
 
 from .capture_validation import _validate_text_batch
+from .continuous_base_retrieval import ContinuousBaseRetrievalSystem
+from .continuous_capture import PreparedContinuousCapture
 from .continuous_retrieval import ContinuousRetrievalSystem
 from .continuous_training_input import ContinuousTrainingView
 from .frozen_clip_text import FrozenClipTextBatch
+from .objectives import variable_positive_symmetric_infonce
 from .parent_retrieval_task import ParentRetrievalBatch, ParentRetrievalTask
 from .temporal_coordination import coordination_objective
 from .training import OFFICIAL_SEEDS, _capture_rng, _restore_rng
@@ -206,11 +209,11 @@ def validate_parent_text_batch(
 
 
 def backward_loaded_parent_batch(
-    system: ContinuousRetrievalSystem,
+    system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem,
     labels: ParentRetrievalBatch,
     text_batch: FrozenClipTextBatch,
     *,
-    load_view: Callable[[str], ContinuousTrainingView],
+    load_view: Callable[[str], ContinuousTrainingView | PreparedContinuousCapture],
     counterfactuals: ParentCounterfactualRows,
     cf_weight: float,
     margin: float,
@@ -223,8 +226,8 @@ def backward_loaded_parent_batch(
     replay; a deterministic private source may instead derive yaw from epoch
     and source. No physical batch tuple or all-capture graph is retained here.
     """
-    if not isinstance(system, ContinuousRetrievalSystem):
-        raise TypeError("complete parent training requires the V2 retrieval system")
+    if not isinstance(system, (ContinuousRetrievalSystem, ContinuousBaseRetrievalSystem)):
+        raise TypeError("complete parent training requires a base or V2 retrieval system")
     if (
         not labels.parents
         or len(set(labels.motion_source_keys)) != len(labels.parents)
@@ -233,6 +236,9 @@ def backward_loaded_parent_batch(
         raise ValueError("complete parent labels must contain distinct admitted sources/families")
     text_count = validate_parent_text_batch(labels, text_batch)
     retrieval_count = len(labels.captions)
+    is_base = isinstance(system, ContinuousBaseRetrievalSystem)
+    if is_base and (counterfactuals.source_keys or text_count != retrieval_count or cf_weight != 0):
+        raise ValueError("base training uses only human retrieval rows and no CF objective")
     device = next(system.parameters()).device
     indices = counterfactuals.indices(labels, text_count=text_count, device=device)
     positive_mask = labels.positive_mask(device=device)
@@ -246,24 +252,29 @@ def backward_loaded_parent_batch(
                 progress("cache", index)
             states.append(_capture_rng())
             view = load_view(source)
-            if type(view) is not ContinuousTrainingView or view.positive_capture_key != source:
+            capture = parent_input_capture(system, view)
+            if capture.source_sha256 != source:
                 raise ValueError("parent loader returned a different physical source")
             with torch.no_grad():
                 cached.append(system.score((view,), text_batch).scores.detach())
-            del view
+            del view, capture
         after = _capture_rng()
         scores = torch.cat(cached).detach().requires_grad_(True)
         if not bool(torch.isfinite(scores).all()):
             raise ValueError("complete parent score cache is nonfinite")
         motion, pos, neg, verified = indices
-        loss = coordination_objective(
-            scores[:, :retrieval_count].contiguous(),
-            positive_mask,
-            cf_positive_scores=scores[motion, pos],
-            cf_negative_scores=scores[motion, neg],
-            verified_negative_mask=verified,
-            cf_weight=cf_weight,
-            margin=margin,
+        loss = (
+            variable_positive_symmetric_infonce(scores.contiguous(), positive_mask)[2]
+            if is_base
+            else coordination_objective(
+                scores[:, :retrieval_count].contiguous(),
+                positive_mask,
+                cf_positive_scores=scores[motion, pos],
+                cf_negative_scores=scores[motion, neg],
+                verified_negative_mask=verified,
+                cf_weight=cf_weight,
+                margin=margin,
+            )
         )
         if not bool(torch.isfinite(loss)):
             raise ValueError("complete parent objective is nonfinite")
@@ -278,16 +289,19 @@ def backward_loaded_parent_batch(
                     progress("replay", index)
                 _restore_rng(state)
                 view = load_view(source)
-                if type(view) is not ContinuousTrainingView or view.positive_capture_key != source:
+                capture = parent_input_capture(system, view)
+                if capture.source_sha256 != source:
                     raise ValueError("parent loader returned a different physical source")
                 replay = system.score((view,), text_batch)
                 if not torch.equal(replay.scores.detach(), cached[index]):
                     raise RuntimeError("complete parent replay changed its score row")
                 torch.autograd.backward(replay.scores, scores.grad[index : index + 1])
-                del replay, view
+                del replay, view, capture
         finally:
             _restore_rng(after)
-        if any(parameter.grad is not None for parameter in system.frozen_b2.parameters()):
+        if not is_base and any(
+            parameter.grad is not None for parameter in system.frozen_b2.parameters()
+        ):
             raise RuntimeError("the shared B2 anchor must remain frozen")
         if any(
             parameter.grad is not None and not bool(torch.isfinite(parameter.grad).all())
@@ -304,3 +318,17 @@ def backward_loaded_parent_batch(
         )
     finally:
         system.train(was_training)
+
+
+def parent_input_capture(
+    system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem,
+    view: ContinuousTrainingView | PreparedContinuousCapture,
+) -> PreparedContinuousCapture:
+    """Keep the actual base and residual physical-input contracts distinct."""
+    if isinstance(system, ContinuousBaseRetrievalSystem):
+        if type(view) is not PreparedContinuousCapture:
+            raise ValueError("base loader must return a prepared capture, not a phase view")
+        return view
+    if type(view) is not ContinuousTrainingView:
+        raise ValueError("residual loader must return the complete phase training view")
+    return view.capture

@@ -59,6 +59,10 @@ choices. Its software qualification is not converged baseline training.
 and shared complete-parent group APIs, full-time bidirectional co-attention,
 and a genuinely trainable pinned CLIP text tower. Group XYZ/long-text adapters
 are disclosed; equation/software checks are not original-task convergence.
+Their [full-negative parent backward seam](docs/PHASESET_V2_LITERATURE_PARENT_TRAINING.md)
+replays one complete capture graph at a time without dropping original WaMo
+auxiliary objectives or freezing MIME text. Dense-gradient software oracles
+are not native optimizer, profile, checkpoint-host or convergence evidence.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

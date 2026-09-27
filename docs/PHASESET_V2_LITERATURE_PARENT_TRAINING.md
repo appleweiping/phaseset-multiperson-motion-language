@@ -4,8 +4,10 @@
 while loading and replaying one entire prepared capture graph at a time.
 This is a numerical seam, not the production optimizer/supervisor, a study
 freeze, a converged baseline, or an authorization to open final-test data.
-TMR is deliberately absent: its VAE samples, global filtering and track-consistent
-set reconstruction cannot be replaced by either of these objectives.
+TMR is deliberately absent from this callable: its VAE samples, global filtering
+and track-consistent set reconstruction cannot be replaced by either of these
+objectives. Its separate faithful path is described in
+[TMR parent backward](PHASESET_V2_TMR_PARENT_TRAINING.md).
 
 For WaMo, every capture's complete motion representation, both reconstruction
 branches and both original/shuffled ordering branches are cached without an

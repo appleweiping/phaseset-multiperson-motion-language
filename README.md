@@ -63,6 +63,10 @@ Their [full-negative parent backward seam](docs/PHASESET_V2_LITERATURE_PARENT_TR
 replays one complete capture graph at a time without dropping original WaMo
 auxiliary objectives or freezing MIME text. Dense-gradient software oracles
 are not native optimizer, profile, checkpoint-host or convergence evidence.
+The separate [TMR VAE parent backward seam](docs/PHASESET_V2_TMR_PARENT_TRAINING.md)
+preserves the original stochastic order, both full-track reconstructions,
+all four KL terms, latent alignment and filtered full-batch negatives; it does
+not route TMR through a generic contrastive-only objective.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

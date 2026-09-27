@@ -6,7 +6,9 @@ window-unit training recipe, a formal-study authorization, a trained B2 anchor,
 or a literature-baseline implementation. A software qualification is not a
 native learning result. The formal study still requires the common bounded
 pilot, explicit parent-unit amendment, floors, hardware profile and 87-stage
-freeze. The two-human relationship audit cannot be supplied by this code.
+freeze. The legacy human relationship audit cannot be supplied by this code;
+the [user amendment](PHASESET_V2_RELATION_SUPERVISION_AMENDMENT.md) now permits
+a separate weak-training branch, not replacement of independent motion truth.
 
 ## Inputs and updates
 
@@ -46,7 +48,10 @@ Optional CF sentences follow the human retrieval prefix. Their columns have no
 fabricated retrieval positive. A verified-false bit is not human provenance:
 the private manifest must bind the actual blind two-human records. Unverified
 CFs contribute no CF term. No label generation or data discovery occurs here.
-Base stages reject CF rows, extra text columns and any CF weight. They optimize
+`ParentWeakCounterfactualRows` instead uses `included_weak` and the separate
+weak loss/count fields. Its source is disclosed machine-caption contradiction,
+never human `verified_false`. The original retrieval prefix and all validation
+rows stay human-only. Base stages reject CF rows, extra text columns and any CF weight. They optimize
 only the existing variable-positive symmetric retrieval InfoNCE.
 
 Optimizer: AdamW, weight decay 0.01, clipping 1.0, 5% warmup followed by cosine

@@ -30,9 +30,12 @@ runtime identities belong in the private execution inputs.
 
 The optional [frozen human CLIP rows](PHASESET_V2_FROZEN_CLIP_ROWS.md) connect
 the base/V2 human-only text interface without loading a tower at training.
-This is not the entire verified-CF interface: that still needs genuinely
-two-human-verified counterfactual rows and their separate admission. The source
-also supplies no production lock, heartbeat, budget, retention, hardware,
+The legacy verified-CF branch still needs real human provenance. Under the
+user's [supervision amendment](PHASESET_V2_RELATION_SUPERVISION_AMENDMENT.md),
+the separate [weak CLIP pool](PHASESET_V2_WEAK_CLIP_POOL.md) supplies disclosed
+machine-caption training targets without granting human verification. Neither
+branch changes the human-only primary gallery. The source supplies no
+production lock, heartbeat, budget, retention, hardware,
 pilot, formal-stage or final-test authority.
 
 Analytic tests exercise full timelines with a rejected gap, RNG-independent

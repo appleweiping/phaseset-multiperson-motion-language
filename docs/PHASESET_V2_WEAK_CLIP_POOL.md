@@ -40,11 +40,24 @@ metadata 文件（19 hashed 加 receipt）双端核验，receipt SHA-256：
 原生产三个预算事件与 summary 不变；正式 **0/87**、pilot **0/12**，本次
 GPU 0 秒。analytic optimizer 用例不是原生学习或论文结果。
 
-## 准入仍待真实生成与训练
+## 后续真实训练文本准备（不是训练结果）
 
-本资格没有生成真实机器标签、没有编码真实弱文本，不关闭私有来源/语义、
-训练 yaw、native CF backward、GPU profile 或正式实验 gate。实际生成
-prompt/选择及原始输出需在训练前冻结并披露；机器标签永不升级为人工
+同日完成一次固定 pilot-learning 文本批次：34 个训练 parent、169 条原官方
+人工 occurrence，GPT-5.6-Sol 纳入 57 条弱句子、排除 112 条。仅读取这些
+parent 的人工 holistic 文本；不读取 motion、phase、模型分数、held-out
+文本或 test。每 occurrence 只允许一次候选或排除，不按配额补齐，不做
+语义重生成。一次无语义输出的真实网络超时保留证据，修复传输后单次恢复；
+首个成功 job 在完整批次复用。原始私有生成记录和完整批次均已冻结。
+
+真实 CPU CLIP 准备于 19:40:37–19:42:15 UTC 完成：只编码这 57 条新增
+机器句子，未截断、最大未截断长度 71 tokens。原 1,334 条人工向量没有
+重新编码；当前 169 条训练人工前缀按位不变。全部 253 个开发 parent 的
+evaluation 仍只返回原人工文本，stage held-out 不进入 weak training。
+模型、RNG、源码、资产及生产预算前后不变，所有退出码 0、stderr 空。
+
+这是数据准备，不是 native learning、pilot 或检索增益。训练 yaw、实际
+native CF backward、GPU profile 及正式实验仍待；正式 **0/87**、pilot
+**0/12**。机器标签永不升级为人工
 `verified_false`、独立运动真值或历史两人挑战成功。
 
 公开选择重现（独立合适 CPU 环境，不含私有预算 caller）：

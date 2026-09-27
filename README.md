@@ -82,6 +82,10 @@ private inputs. The [frozen human CLIP row source](docs/PHASESET_V2_FROZEN_CLIP_
 connects base/V2 human-only text using exact cached preparation rows with a
 distinct derived receipt, not a new encoder invocation. The genuine verified-CF
 pool and production admission remain pending.
+The [parent operation monitor](docs/PHASESET_V2_PARENT_OPERATION_MONITOR.md)
+holds a process-released lease, emits independent long-operation heartbeats and
+supports explicit recent/best checkpoint retention without deleting predecessor
+or historical evidence. It does not grant formal starts or global compute budget.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

@@ -33,6 +33,7 @@ from .continuous_retrieval import ContinuousRetrievalSystem
 from .continuous_training_input import ContinuousTrainingView
 from .frozen_clip_text import FrozenClipTextBatch
 from .parent_retrieval_task import ParentCaptionRecord, ParentRetrievalBatch, ParentRetrievalTask
+from .parent_run_monitor import ParentRunMonitor, parent_failure_code
 from .training import (
     OFFICIAL_SEEDS,
     CheckpointArtifact,
@@ -275,6 +276,7 @@ class ContinuousParentTrainingHost:
         self._root: Path | None = None
         self._used = False
         self._event_sequence = 0
+        self._monitor: ParentRunMonitor | None = None
 
     def _batches(self, epoch: int):
         return parent_epoch_batches(
@@ -303,18 +305,21 @@ class ContinuousParentTrainingHost:
 
     def _event(self, phase: str, **fields):
         assert self._root is not None
+        event = {
+            "phase": phase,
+            "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+            "global_step": self._step,
+            "epoch": self._epoch,
+            "parent_batch_offset": self._offset,
+            **fields,
+        }
         _write_json_once(
             self._root / f"event-{self._event_sequence:08d}.json",
-            {
-                "phase": phase,
-                "observed_at_utc": datetime.now(timezone.utc).isoformat(),
-                "global_step": self._step,
-                "epoch": self._epoch,
-                "parent_batch_offset": self._offset,
-                **fields,
-            },
+            event,
         )
         self._event_sequence += 1
+        if self._monitor is not None and phase != "terminal":
+            self._monitor.observe(event)
 
     @torch.no_grad()
     def _validate(self) -> float:
@@ -357,6 +362,7 @@ class ContinuousParentTrainingHost:
 
     def _checkpoint(self, *, select: bool = False) -> CheckpointArtifact:
         assert self._root is not None
+        self._event("checkpoint_write")
         self._sequence += 1
         path = self._root / f"checkpoint-{self._step:012d}-{self._sequence:06d}.pt"
         best = (
@@ -383,6 +389,8 @@ class ContinuousParentTrainingHost:
         self._latest = _atomic_torch_save(path, payload)
         if select:
             self._best = self._latest
+        if self._monitor is not None:
+            self._monitor.checkpoint(self._latest, best=self._best)
         return self._latest
 
     def _resume(self, path: Path, digest: str):
@@ -478,6 +486,7 @@ class ContinuousParentTrainingHost:
         resume_checkpoint: str | Path | None = None,
         resume_sha256: str | None = None,
         stop_after_steps: int | None = None,
+        checkpoint_keep_recent: int | None = None,
     ) -> ParentHostReport:
         """Run or resume into a distinct immutable attempt directory.
 
@@ -485,6 +494,8 @@ class ContinuousParentTrainingHost:
         is the end of an epoch, its validation is still performed before stop;
         the selected checkpoint cannot be bypassed by resume. Terminal records
         never claim research completion or grant a formal start/pilot budget.
+        ``checkpoint_keep_recent>=2`` explicitly retires this attempt's older
+        unreferenced payloads only; None preserves the legacy keep-all policy.
         """
         if self._used:
             raise RuntimeError("a host instance may own only one attempt")
@@ -494,22 +505,29 @@ class ContinuousParentTrainingHost:
             type(stop_after_steps) is not int or not 0 <= stop_after_steps <= self._total_steps
         ):
             raise ValueError("stop point must be an update boundary within this schedule")
+        if checkpoint_keep_recent is not None and (
+            type(checkpoint_keep_recent) is not int or checkpoint_keep_recent < 2
+        ):
+            raise ValueError("checkpoint retention must keep at least two recent payloads")
         self._used = True
         self._root = Path(run_directory).resolve()
         self._root.mkdir(parents=True, exist_ok=False, mode=0o700)
-        _write_json_once(
-            self._root / "run.json",
-            {
-                "manifest": self._manifest,
-                "predecessor_checkpoint": None
-                if resume_checkpoint is None
-                else str(Path(resume_checkpoint).resolve()),
-                "predecessor_sha256": resume_sha256,
-                "formal_authority": False,
-            },
-        )
-        outcome, failure = "FAILED", None
+        self._monitor = ParentRunMonitor(self._root, keep_recent=checkpoint_keep_recent)
+        outcome, failure, primary_error = "FAILED", None, None
         try:
+            self._monitor.start()
+            _write_json_once(
+                self._root / "run.json",
+                {
+                    "manifest": self._manifest,
+                    "predecessor_checkpoint": None
+                    if resume_checkpoint is None
+                    else str(Path(resume_checkpoint).resolve()),
+                    "predecessor_sha256": resume_sha256,
+                    "checkpoint_keep_recent": checkpoint_keep_recent,
+                    "formal_authority": False,
+                },
+            )
             with _frozen_numerical_runtime(next(self.system.parameters()).device):
                 if resume_checkpoint is None:
                     random.seed(self.config.seed)
@@ -540,7 +558,9 @@ class ContinuousParentTrainingHost:
                     if stop_after_steps is not None and self._step == stop_after_steps:
                         break
                     labels = batches[self._offset]
+                    self._event("training_batch")
                     result = self._backward_batch(labels)
+                    self._monitor.check()
                     norm = torch.nn.utils.clip_grad_norm_(
                         self._parameters, 1.0, error_if_nonfinite=True
                     )
@@ -581,22 +601,51 @@ class ContinuousParentTrainingHost:
                 )
         except BaseException as error:
             failure = type(error).__name__
+            primary_error = error
             raise
         finally:
-            self._event("terminal", outcome=outcome, failure_class=failure)
-            _write_json_once(
-                self._root / "terminal.json",
-                {
-                    "outcome": outcome,
-                    "failure_class": failure,
-                    "global_step": self._step,
-                    "completed_epochs": self._epoch,
-                    "parents_seen": self._parents_seen,
-                    "latest_checkpoint": None if self._latest is None else str(self._latest.path),
-                    "latest_checkpoint_sha256": None
-                    if self._latest is None
-                    else self._latest.sha256,
-                    "best_validation_r1": self._best_value,
-                    "formal_authority": False,
-                },
-            )
+            cleanup_error = None
+            try:
+                self._monitor.finish(outcome=outcome, failure=primary_error)
+            except BaseException as error:
+                cleanup_error = error
+                if primary_error is None:
+                    outcome, failure, primary_error = "FAILED", type(error).__name__, error
+                else:
+                    primary_error.add_note(f"monitor close also failed: {error!r}")
+            try:
+                self._event("terminal", outcome=outcome, failure_class=failure)
+                _write_json_once(
+                    self._root / "terminal.json",
+                    {
+                        "outcome": outcome,
+                        "failure_class": failure,
+                        "failure_code": parent_failure_code(primary_error),
+                        "global_step": self._step,
+                        "completed_epochs": self._epoch,
+                        "parents_seen": self._parents_seen,
+                        "latest_checkpoint": None
+                        if self._latest is None
+                        else str(self._latest.path),
+                        "latest_checkpoint_sha256": None
+                        if self._latest is None
+                        else self._latest.sha256,
+                        "best_validation_r1": self._best_value,
+                        "monitor": self._monitor.summary(),
+                        "formal_authority": False,
+                    },
+                )
+            except BaseException as error:
+                if primary_error is None:
+                    primary_error = error
+                    raise
+                primary_error.add_note(f"terminal evidence write also failed: {error!r}")
+            finally:
+                try:
+                    self._monitor.release()
+                except BaseException as error:
+                    if primary_error is None:
+                        raise
+                    primary_error.add_note(f"lifetime lease release also failed: {error!r}")
+            if cleanup_error is not None and primary_error is cleanup_error:
+                raise cleanup_error

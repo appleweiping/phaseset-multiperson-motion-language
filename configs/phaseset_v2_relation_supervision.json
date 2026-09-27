@@ -1,0 +1,48 @@
+{
+  "schema": "phaseset-v2-relation-supervision-amendment-v1",
+  "amendment_date": "2026-09-27",
+  "status": "DECLARED_IMPLEMENTATION_PENDING_NOT_TRAINING_ADMISSION",
+  "reason": "No two new human annotators are available; the project owner requested existing annotations or LLM assistance instead of waiting.",
+  "supersedes": "The requirement to obtain two new human annotators before independent development or training preparation can proceed.",
+  "primary_retrieval": {
+    "positive_source": "original_official_human_holistic_rows",
+    "machine_text_in_primary_gallery": false,
+    "identity": "admitted_parent_annotation_family",
+    "sealed_test_unchanged": true
+  },
+  "counterfactual_training": {
+    "preferred_source": "existing_explicit_relation_annotations_if_their_label_semantics_and_rights_match",
+    "fallback_source": "machine_caption_contradiction",
+    "fallback_role": "weak_training_supervision_not_verified_motion_truth",
+    "model": "gpt-5.6-sol",
+    "inputs": "official_human_text_of_the_same_training_parent_only",
+    "forbidden_inputs": ["model_scores", "motion_features", "phase", "held_out_or_final_test_text"],
+    "same_pool_for_full_and_applicable_controls": true,
+    "no_new_data_or_training_slots": true,
+    "human_verified_false_from_machine_labels": false,
+    "implementation_requirement": "Separate weak-label admission and counts; never set the existing human-only verified_false bit merely because an LLM supplies a label.",
+    "prompt_and_selection_freeze": "before_the_relevant_pilot_or_training_start"
+  },
+  "relation_evaluation": {
+    "two_new_human_annotators_required_to_continue": false,
+    "machine_assisted_challenge_role": "exploratory_separate_from_primary_retrieval",
+    "old_200_pair_100_capture_8_component_target_met_by_llm": false,
+    "old_human_challenge_5pp_criterion": "UNASSESSABLE_WITHOUT_MATCHING_INDEPENDENT_LABELS",
+    "existing_positive_caption_is_proof_of_false_counterfactual": false,
+    "machine_accuracy_is_independent_ground_truth": false
+  },
+  "claim_limits": [
+    "Report primary retrieval against the unchanged official human labels.",
+    "CF-versus-no-CF retrieval effects may support the utility of weak training supervision, not verified relation understanding.",
+    "Do not claim human-verified relational challenge success or grounding from machine labels.",
+    "Do not mark the historical all-mechanism success target achieved by substituting an LLM for the missing humans."
+  ],
+  "unchanged": {
+    "formal_stages": 87,
+    "max_formal_starts": 90,
+    "pilot_stages": 12,
+    "seeds": [1729, 2718, 31415],
+    "gpu_hours": 300,
+    "component_splits_and_budget_history": true
+  }
+}

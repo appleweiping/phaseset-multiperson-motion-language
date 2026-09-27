@@ -43,6 +43,18 @@ multi-person skeleton sequence
 ## PhaseSet-V2 research upgrade — 2026-09-26
 
 The user-selected target is now [ACM ICMR 2027](docs/PHASESET_V2_ICMR_TARGET.md).
+
+The subsequent [relation-supervision amendment](docs/PHASESET_V2_RELATION_SUPERVISION_AMENDMENT.md)
+uses existing official human retrieval annotations and permits separately
+disclosed weak machine supervision; no new human annotators are awaited.
+Machine labels are not independent motion ground truth or human-challenge
+success. The weak-CF implementation is still pending, not a completed run.
+
+A [complete-native-parent CPU profile](docs/PHASESET_V2_NATIVE_PROCESS_PROFILE.md)
+has now passed through the production lifecycle and journal: both 512-D systems,
+all 55 accepted windows and 10 official human rows, full-negative backward
+replay, unchanged weights, zero optimizer/GPU use. This is not formal training,
+GPU throughput or a paper retrieval result; formal stages remain **0/87**.
 The venue amendment changes submission format, not the scientific matrix or
 compute budget. The existing ICASSP manuscript is historical, not an ICMR-ready
 paper or a submitted result.

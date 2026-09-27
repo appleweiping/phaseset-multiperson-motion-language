@@ -1,5 +1,8 @@
 # Linux owned-process执行与真实成本结算
 
+后续 [完整 native CPU profile](PHASESET_V2_NATIVE_PROCESS_PROFILE.md) 已实际接入
+同一生产 journal 并闭合；下文旧23项软件资格记录保留，不能代替GPU/训练结果。
+
 `run_budgeted_process`把已实现的单一StudyBudget接到实际子进程生命周期：先读
 GPU占用/其他compute，取得本研究per-GPU lease，再检查；完整wall envelope预约
 后spawn前又查一次。不启动SSH、不使用shell=True、不自动重试，也不授科学许可。

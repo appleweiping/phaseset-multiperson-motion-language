@@ -11,6 +11,7 @@
 
 公开开发仓库继续保留；匿名投稿稿件不可直接链接识别作者的网站或公开owner。
 实验完整证据/可复现release继续作为项目交付，但不冒充大会允许的投稿附件。
-真人关系核实与数据权利、真实训练/统计仍须完成；不为换venue伪造或缩小研究。
+关系证据按后续[监督修订](PHASESET_V2_RELATION_SUPERVISION_AMENDMENT.md)披露：
+不等两位新标注者，机器不冒充真人挑战；数据权利、真实训练/统计不以此省略。
 新ICMR论文须由同一冻结aggregate生成，尚无真实结果时不填写结果数字。
 机器可读目标见[venue contract](../configs/phaseset_v2_venue.json)。

@@ -86,6 +86,10 @@ The [parent operation monitor](docs/PHASESET_V2_PARENT_OPERATION_MONITOR.md)
 holds a process-released lease, emits independent long-operation heartbeats and
 supports explicit recent/best checkpoint retention without deleting predecessor
 or historical evidence. It does not grant formal starts or global compute budget.
+The [persistent study budget](docs/PHASESET_V2_STUDY_BUDGET.md) preserves actual
+historical GPU charges, pending wall-time envelopes, fixed pilot allocations,
+and rooted formal predecessors. Bookkeeping qualification does not close the
+production spawn/timeout/settlement integration or scientific admission.
 
 [Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
 records 117 focused CPU tests and one full-width CUDA forward/backward witness.

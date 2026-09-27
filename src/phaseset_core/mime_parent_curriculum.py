@@ -65,7 +65,11 @@ def mime_training_parent_anchors(
     labels = _learning_batch(
         task, train_components, batch_size=len(task.parents), seed=1729, epoch=0
     )
-    text, commitments, _ = _validate_text_batch(text_batch)
+    # A real parent host selects its exact training subset from the closed
+    # complete-development CLIP batch. Accept that authenticated selection,
+    # then require all and only learning-human commitments and original bytes.
+    # Extra weak/validation columns cannot pass this exact equality.
+    text, commitments, _ = _validate_text_batch(text_batch, allow_row_selection=True)
     if commitments != labels.caption_commitments:
         raise ValueError("MIME anchors need all and only learning-parent human rows in order")
     for caption, row in zip(labels.captions, text_batch.receipt.caption_rows, strict=True):

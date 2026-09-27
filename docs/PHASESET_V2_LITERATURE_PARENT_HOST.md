@@ -1,10 +1,19 @@
 # Complete-parent literature optimizer host
 
 `phaseset_core.literature_parent_host.LiteratureParentTrainingHost` uses the
-same AdamW, warmup/cosine, gradient clipping, validation checkpoint selector,
+same explicit Adam(W), warmup/cosine, gradient clipping, validation checkpoint selector,
 immutable attempt and checkpoint/resume loop as the complete-parent base and
 residual host. The original constructor still admits only its actual base/V2
 scorers; literature models enter through their own strict constructor.
+`ParentHostConfig.for_literature` supplies the disclosed method-specific
+optimizer/decay defaults; those settings are exact resume inputs.
+
+Actual MIME group training uses `MIMEParentTrainingHost`, not the generic
+uniform-batch literature host. Its `_batches` hook invokes the qualified
+training-only MIME curriculum at every epoch, including resume/census checks.
+The caller prepares anchors once from all learning-parent human CLIP rows;
+neighbor width and an owned snapshot of anchor values join the checkpoint manifest. The genuinely
+trainable MIME CLIP tower remains separate from these frozen sampling anchors.
 
 ## Objectives and inputs
 

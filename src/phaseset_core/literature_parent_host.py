@@ -28,10 +28,11 @@ from .literature_parent_training import (
 )
 from .mime_language import TrainableMIMECLIP
 from .mime_set import MIMERetrieval, MIMESetMotion
+from .mime_parent_curriculum import MimeParentAnchors, mime_parent_epoch_batches
 from .parent_retrieval_task import ParentCaptionRecord, ParentRetrievalTask
 from .tmr_parent_training import backward_loaded_tmr_parent_batch
 from .tmr_set import TMRSet, TMRTextBatch
-from .training import _capture_macro_bidirectional_r1, _capture_rng, _restore_rng
+from .training import _capture_macro_bidirectional_r1, _capture_rng, _restore_rng, _stable_hash
 from .wamo_set import WaMoSet
 
 
@@ -195,3 +196,56 @@ class LiteratureParentTrainingHost(ContinuousParentTrainingHost):
         finally:
             self.system.train(was_training)
             _restore_rng(previous_rng)
+
+
+class MIMEParentTrainingHost(LiteratureParentTrainingHost):
+    """Actual shared MIME optimizer with its training-only curriculum hook.
+
+    Anchors are prepared once from every official learning-parent human row,
+    independently of the trainable MIME language tower. Neighbor width and
+    anchor identity join the existing exact checkpoint/resume manifest.
+    Uniform warmup and cosine hardness follow the qualified public sampler;
+    this grants neither pilot slots nor original dyadic reproduction.
+    """
+
+    def __init__(
+        self,
+        system: MIMERetrieval,
+        task: ParentRetrievalTask,
+        source: LiteratureParentSource,
+        config: ParentHostConfig,
+        bindings: ParentHostBindings,
+        *,
+        anchors: MimeParentAnchors,
+        neighbor_window: int,
+    ):
+        if not isinstance(system, MIMERetrieval) or not isinstance(system.motion, MIMESetMotion):
+            raise TypeError("curriculum host requires the actual shared MIME group scorer")
+        # Own the sampling values: a frozen dataclass alone cannot stop the
+        # caller mutating its tensor after this host binds the manifest.
+        self._curriculum_anchors = MimeParentAnchors(
+            anchors.family_keys, anchors.embeddings.clone()
+        )
+        self._neighbor_window = neighbor_window
+        super().__init__(system, task, source, config, bindings)
+        self._manifest["mime_curriculum"] = {
+            "neighbor_window": neighbor_window,
+            "anchor_family_keys": self._curriculum_anchors.family_keys,
+            "anchor_embeddings_sha256": _stable_hash(self._curriculum_anchors.embeddings),
+            "sampler": "mime_parent_epoch_batches",
+            "uniform_epochs": 3,
+            "ramp_maximum_epoch_zero_based": 12,
+            "maximum_hardness": 0.25,
+            "source": "all_learning_parent_human_frozen_clip_mean",
+        }
+
+    def _batches(self, epoch: int):
+        return mime_parent_epoch_batches(
+            self.task,
+            self._curriculum_anchors,
+            train_components=self.config.train_components,
+            batch_size=self.config.parent_batch_size,
+            neighbor_window=self._neighbor_window,
+            seed=self.config.seed,
+            epoch=epoch,
+        )

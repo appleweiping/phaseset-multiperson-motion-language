@@ -48,6 +48,12 @@ two-layer GELU frame fusion, ratio epsilon 1e-8 and initial logit scale 1/0.07
 are disclosed implementation choices where author code is not available.
 The existing three MIME short-pilot slots govern eligible choices, not added HPO.
 
+`ParentHostConfig.for_literature("MIME-Set", ...)` declares AdamW, learning rate
+1e-4 and weight decay 1e-4 rather than inheriting the internal AdamW/0.01 decay.
+These settings are explicit in the run/checkpoint config and must match on
+resume. The common group host's 5% warmup/cosine schedule and gradient clipping
+at 1.0 are disclosed project adaptations; they are not asserted author defaults.
+
 Tests include original-input dimensions, independent full-time attention
 equations, all parameter families, endpoint swap, all K=3 permutations and
 input-gradient equivariance, dropout/checkpoint/RNG equality, missing root steps,

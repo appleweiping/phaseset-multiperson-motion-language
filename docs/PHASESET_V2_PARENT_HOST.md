@@ -1,7 +1,7 @@
 # Complete-parent base and residual training host
 
 `continuous_parent_host.py` connects the qualified full-gallery gradient replay
-to real FP32 AdamW updates, checkpoint selection and restart. It is not the old
+to real FP32 Adam(W) updates, checkpoint selection and restart. It is not the old
 window-unit training recipe, a formal-study authorization, a trained B2 anchor,
 or a literature-baseline implementation. A software qualification is not a
 native learning result. The formal study still requires the common bounded
@@ -54,7 +54,7 @@ never human `verified_false`. The original retrieval prefix and all validation
 rows stay human-only. Base stages reject CF rows, extra text columns and any CF weight. They optimize
 only the existing variable-positive symmetric retrieval InfoNCE.
 
-Optimizer: AdamW, weight decay 0.01, clipping 1.0, 5% warmup followed by cosine
+Internal default optimizer: AdamW, weight decay 0.01, clipping 1.0, 5% warmup followed by cosine
 decay, default residual learning rate 3e-4 and 20 complete epochs. Seeds remain
 1729, 2718 and 31415. Batch size is explicitly **parents**, not 128 windows.
 The short qualification schedules are not the formal/pilot freeze. There is
@@ -94,7 +94,7 @@ manifest, code including the source adapter, qualified runtime and frozen
 base identity. This caller-provided binding is not a substitute for real
 qualification or permission.
 
-Checkpoints contain model, AdamW, scheduler, Python/NumPy/Torch RNG, complete
+Checkpoints contain model, configured optimizer, scheduler, Python/NumPy/Torch RNG, complete
 epoch/batch cursor, parents seen, validation history and selected artifact.
 Resume verifies the exact predecessor digest, payload, same execution inputs,
 cursor/census, frozen anchor and optimizer/scheduler progress. A resumed host
@@ -112,6 +112,25 @@ must close that failure from its own evidence. Never publish private host
 manifests, checkpoints, caption text or licensed physical cache files.
 
 ## Qualification scope
+
+Optimizer family and weight decay are explicit `ParentHostConfig` settings,
+serialized in the run/checkpoint manifest and checked on resume. Internal
+base/residual defaults remain AdamW and 0.01 decay. `for_literature` supplies
+declared paper-optimizer starting points: TMR AdamW/0.01, WaMo Adam/0,
+MIME AdamW/1e-4, each at lr1e-4. Explicit bounded-pilot overrides remain
+visible; they are not hidden author defaults. The shared 5%-warmup/cosine,
+clipping, complete-parent schedule and validation endpoint are group-study
+adaptations, not claims of original single-/two-person training reproduction.
+The earlier hard-coded host could not express WaMo Adam or MIME decay; no
+native/formal learning used that host before this correction.
+
+The scoped server CPU qualification executed 17 cases with no skips. It
+includes actual analytic TMR/WaMo/MIME optimizer loops, independent coupled
+Adam versus decoupled AdamW first-update oracles, the unchanged legacy-default
+oracle, configuration-drift rejection before loading training inputs, and
+dropout interruption/resume equality for Adam/0 and AdamW/1e-4 across model,
+optimizer, scheduler and RNG. Production budget history was unchanged.
+These are software execution checks, not native training or retrieval results.
 
 Tests exercise actual registered 512D B0/B1/B2 forward and all-parameter
 checkpointed backward with active dropout, plus an independent per-window

@@ -60,6 +60,8 @@ class LiteratureParentTrainingHost(ContinuousParentTrainingHost):
     Each method keeps its own qualified full-negative objective/replay. Text
     is encoded once per full validation gallery; complete motion parents are
     streamed one at a time. Inter-X's original role-aware MIME is separate.
+    Adam versus AdamW and weight decay are explicit resume-bound configuration,
+    not silently forced to the internal base/residual AdamW .01 default.
     """
 
     def __init__(

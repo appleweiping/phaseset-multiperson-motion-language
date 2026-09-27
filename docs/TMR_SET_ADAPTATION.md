@@ -15,6 +15,15 @@ features and separate normalized MPNet sentence features, not sentence CLIP.
 Group, text and decoder defaults are 256D, FFN 1024, six layers, four heads,
 dropout 0.1. The capture hierarchy/PMA are additional disclosed capacity.
 
+The declared optimizer starting point is lr1e-4 from the
+[pinned training YAML](https://github.com/Mathux/TMR/blob/6d74688730d15d43b0a755ce2b0e1f2d76138fc1/configs/model/tmr.yaml),
+with AdamW from the
+[pinned optimizer implementation](https://github.com/Mathux/TMR/blob/6d74688730d15d43b0a755ce2b0e1f2d76138fc1/src/model/temos.py).
+That call leaves weight decay at the PyTorch AdamW default, made explicit as
+0.01 in this host. `ParentHostConfig.for_literature` exposes these values;
+bounded pilot overrides must be declared. The common group-study warmup/cosine
+schedule is an adaptation, not the upstream training loop.
+
 [The language loader](../src/phaseset_core/tmr_language.py) checks every
 tokenizer/config/checkpoint file against pinned public digests before loading
 from private directories, with local-only safetensors and no remote code.

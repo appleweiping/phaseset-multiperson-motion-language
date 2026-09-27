@@ -35,6 +35,13 @@ orthogonal or perfectly reconstructing. Initial reconstruction is tested.
 The existing three WaMo short-pilot slots, not an additional search, govern
 any permitted configuration selection before the common contract freezes.
 
+`ParentHostConfig.for_literature("WaMo-Set", ...)` declares Adam, learning rate
+1e-4 and zero weight decay (no decay is specified in the paper), instead of
+the internal host's AdamW/0.01 default. The settings are checkpoint/resume-bound;
+pilot overrides must be explicit. The common group host adds 5% warmup before
+cosine decay and clips gradients at 1.0. These are disclosed shared training
+adaptations, not extra purported author settings or convergence evidence.
+
 Multi-person/whole-parent extensions:
 
 - Reuse the admitted complete body22 capture contract; shared per-actor

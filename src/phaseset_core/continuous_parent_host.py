@@ -81,6 +81,8 @@ class ParentHostConfig:
     cf_weight: float = 0.2
     cf_margin: float = 0.2
     stage: str = "residual"
+    optimizer: str = "adamw"
+    weight_decay: float = 0.01
 
     @classmethod
     def for_base(
@@ -105,6 +107,29 @@ class ParentHostConfig:
             },
         )
 
+    @classmethod
+    def for_literature(cls, method, seed, train_components, validation_components, **settings):
+        """Declared paper optimizer defaults; shared group schedule is an adaptation.
+
+        TMR's pinned implementation uses AdamW with its .01 default decay.
+        WaMo specifies Adam; MIME specifies AdamW with 1e-4 decay. All specify
+        lr1e-4. Bounded pilot choices may override these explicitly; this
+        helper grants no pilot, native-training or original-reproduction claim.
+        """
+        defaults = {
+            "TMR-Set": {"optimizer": "adamw", "weight_decay": 0.01},
+            "WaMo-Set": {"optimizer": "adam", "weight_decay": 0.0},
+            "MIME-Set": {"optimizer": "adamw", "weight_decay": 1e-4},
+        }
+        if method not in defaults:
+            raise ValueError("need an explicit registered literature method")
+        return cls.for_base(
+            seed,
+            train_components,
+            validation_components,
+            **{"learning_rate": 1e-4, **defaults[method], **settings},
+        )
+
     def __post_init__(self):
         if type(self.seed) is not int or self.seed not in OFFICIAL_SEEDS:
             raise ValueError("host requires one of the three fixed seeds")
@@ -122,11 +147,13 @@ class ParentHostConfig:
             raise ValueError("epoch count must be a positive integer")
         if type(self.parent_batch_size) is not int or self.parent_batch_size < 2:
             raise ValueError("parent batch size must be at least two")
-        for value in (self.learning_rate, self.cf_weight, self.cf_margin):
+        for value in (self.learning_rate, self.cf_weight, self.cf_margin, self.weight_decay):
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError("loss/optimizer scalars must be finite nonnegative numbers")
         if self.learning_rate == 0:
             raise ValueError("learning rate must be positive")
+        if self.optimizer not in ("adam", "adamw"):
+            raise ValueError("optimizer must explicitly be adam or adamw")
         if self.stage not in ("base", "residual"):
             raise ValueError("host stage must explicitly be base or residual")
         if self.stage == "base" and (self.cf_weight != 0 or self.cf_margin != 0):
@@ -180,7 +207,7 @@ def _write_json_once(path: Path, payload: dict) -> None:
 
 
 class ContinuousParentTrainingHost:
-    """AdamW/5%-warmup/cosine, clip1, full-gallery validation, immutable resume.
+    """Explicit Adam(W)/5%-warmup/cosine, clip1, validation, immutable resume.
 
     FP32 only; no automatic BF16, shorter timeline, dropped tail, sampled
     negatives or toy-model fallback. One effective update is one complete
@@ -264,8 +291,9 @@ class ContinuousParentTrainingHost:
             "steps_per_epoch": self._steps_per_epoch,
             "total_steps": self._total_steps,
         }
-        self._optimizer = torch.optim.AdamW(
-            self._parameters, lr=config.learning_rate, weight_decay=0.01
+        optimizer_type = torch.optim.Adam if config.optimizer == "adam" else torch.optim.AdamW
+        self._optimizer = optimizer_type(
+            self._parameters, lr=config.learning_rate, weight_decay=config.weight_decay
         )
         self._scheduler = torch.optim.lr_scheduler.LambdaLR(
             self._optimizer, lambda step: _learning_rate_multiplier(step, self._total_steps)
@@ -445,7 +473,7 @@ class ContinuousParentTrainingHost:
         if (
             self._scheduler.last_epoch != step
             or any(
-                group["lr"] != expected_lr or group["weight_decay"] != 0.01
+                group["lr"] != expected_lr or group["weight_decay"] != self.config.weight_decay
                 for group in self._optimizer.param_groups
             )
             or any(

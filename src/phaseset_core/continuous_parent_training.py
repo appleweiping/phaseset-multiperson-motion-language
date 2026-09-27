@@ -4,7 +4,8 @@ This is the numerical seam for the private training host, not its scientific
 freeze, budget ledger, scheduler or checkpoint selector. It uses all human
 rows once per admitted parent, preserves a full effective-batch negative
 gallery, and replays one complete capture graph at a time. No optimizer is
-started here. Human verification of counterfactuals remains external.
+started here. Human and weak CFs have distinct types; neither bit proves its
+external provenance. Machine labels never acquire human verification here.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from .continuous_training_input import ContinuousTrainingView
 from .frozen_clip_text import FrozenClipTextBatch
 from .objectives import variable_positive_symmetric_infonce
 from .parent_retrieval_task import ParentRetrievalBatch, ParentRetrievalTask
-from .temporal_coordination import coordination_objective
+from .temporal_coordination import coordination_objective, weak_coordination_objective
 from .training import OFFICIAL_SEEDS, _capture_rng, _restore_rng
 
 
@@ -144,6 +145,66 @@ class ParentCounterfactualRows:
 
 
 @dataclass(frozen=True)
+class ParentWeakCounterfactualRows:
+    """Machine-caption training targets, separate from human verified-false rows.
+
+    Positives must be original human rows of the same parent; negatives must
+    be appended training-only columns, never a gallery row. Inclusion is a
+    weak supervision decision, not motion truth. The private input manifest
+    binds the frozen generation policy, original text and machine provenance.
+    No generation, relevance judgement or human verification happens here.
+    """
+
+    source_keys: tuple[str, ...]
+    positive_columns: tuple[int, ...]
+    negative_columns: tuple[int, ...]
+    included_weak: tuple[bool, ...]
+
+    def indices(
+        self, labels: ParentRetrievalBatch, *, text_count: int, device: torch.device
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        count = len(self.source_keys)
+        if any(
+            type(value) is not tuple or len(value) != count
+            for value in (
+                self.source_keys,
+                self.positive_columns,
+                self.negative_columns,
+                self.included_weak,
+            )
+        ):
+            raise ValueError("weak CF source, column and inclusion tuples must align")
+        by_source = {key: index for index, key in enumerate(labels.motion_source_keys)}
+        human_count = len(labels.text_positive_keys)
+        for source, positive, negative, included in zip(
+            self.source_keys,
+            self.positive_columns,
+            self.negative_columns,
+            self.included_weak,
+            strict=True,
+        ):
+            if source not in by_source or type(included) is not bool:
+                raise ValueError("weak CF needs an admitted source and explicit bool inclusion")
+            if (
+                type(positive) is not int
+                or not 0 <= positive < human_count
+                or labels.text_positive_keys[positive]
+                != labels.motion_positive_keys[by_source[source]]
+            ):
+                raise ValueError("weak CF positive must be the same parent's original human row")
+            if type(negative) is not int or not human_count <= negative < text_count:
+                raise ValueError("weak CF negative must be appended outside the human gallery")
+        return (
+            torch.tensor(
+                [by_source[key] for key in self.source_keys], dtype=torch.int64, device=device
+            ),
+            torch.tensor(self.positive_columns, dtype=torch.int64, device=device),
+            torch.tensor(self.negative_columns, dtype=torch.int64, device=device),
+            torch.tensor(self.included_weak, dtype=torch.bool, device=device),
+        )
+
+
+@dataclass(frozen=True)
 class ParentBackwardResult:
     loss: float
     scores: Tensor
@@ -151,6 +212,7 @@ class ParentBackwardResult:
     retrieval_caption_count: int
     verified_counterfactual_count: int
     replayed_captures: int
+    weak_counterfactual_count: int = 0
 
 
 def backward_parent_batch(
@@ -159,7 +221,7 @@ def backward_parent_batch(
     text_batch: FrozenClipTextBatch,
     labels: ParentRetrievalBatch,
     *,
-    counterfactuals: ParentCounterfactualRows,
+    counterfactuals: ParentCounterfactualRows | ParentWeakCounterfactualRows,
     cf_weight: float,
     margin: float,
 ) -> ParentBackwardResult:
@@ -214,7 +276,7 @@ def backward_loaded_parent_batch(
     text_batch: FrozenClipTextBatch,
     *,
     load_view: Callable[[str], ContinuousTrainingView | PreparedContinuousCapture],
-    counterfactuals: ParentCounterfactualRows,
+    counterfactuals: ParentCounterfactualRows | ParentWeakCounterfactualRows,
     cf_weight: float,
     margin: float,
     progress: Callable[[str, int], None] | None = None,
@@ -236,11 +298,26 @@ def backward_loaded_parent_batch(
         raise ValueError("complete parent labels must contain distinct admitted sources/families")
     text_count = validate_parent_text_batch(labels, text_batch)
     retrieval_count = len(labels.captions)
+    if type(counterfactuals) not in (ParentCounterfactualRows, ParentWeakCounterfactualRows):
+        raise TypeError("CF rows must declare human-verified or weak supervision explicitly")
+    is_weak = type(counterfactuals) is ParentWeakCounterfactualRows
     is_base = isinstance(system, ContinuousBaseRetrievalSystem)
     if is_base and (counterfactuals.source_keys or text_count != retrieval_count or cf_weight != 0):
         raise ValueError("base training uses only human retrieval rows and no CF objective")
     device = next(system.parameters()).device
     indices = counterfactuals.indices(labels, text_count=text_count, device=device)
+    if is_weak:
+        human_digests = {
+            parent.source_sha256: {
+                hashlib.sha256(text.encode("utf-8")).hexdigest() for text in parent.captions
+            }
+            for parent in labels.parents
+        }
+        for source, negative in zip(
+            counterfactuals.source_keys, counterfactuals.negative_columns, strict=True
+        ):
+            if text_batch.receipt.caption_rows[negative][2] in human_digests[source]:
+                raise ValueError("weak negative repeats an original human positive of its parent")
     positive_mask = labels.positive_mask(device=device)
     was_training = system.training
     system.train()
@@ -262,20 +339,29 @@ def backward_loaded_parent_batch(
         scores = torch.cat(cached).detach().requires_grad_(True)
         if not bool(torch.isfinite(scores).all()):
             raise ValueError("complete parent score cache is nonfinite")
-        motion, pos, neg, verified = indices
-        loss = (
-            variable_positive_symmetric_infonce(scores.contiguous(), positive_mask)[2]
-            if is_base
-            else coordination_objective(
+        motion, pos, neg, included = indices
+        if is_base:
+            loss = variable_positive_symmetric_infonce(scores.contiguous(), positive_mask)[2]
+        elif is_weak:
+            loss = weak_coordination_objective(
                 scores[:, :retrieval_count].contiguous(),
                 positive_mask,
                 cf_positive_scores=scores[motion, pos],
                 cf_negative_scores=scores[motion, neg],
-                verified_negative_mask=verified,
+                included_weak_mask=included,
                 cf_weight=cf_weight,
                 margin=margin,
             )
-        )
+        else:
+            loss = coordination_objective(
+                scores[:, :retrieval_count].contiguous(),
+                positive_mask,
+                cf_positive_scores=scores[motion, pos],
+                cf_negative_scores=scores[motion, neg],
+                verified_negative_mask=included,
+                cf_weight=cf_weight,
+                margin=margin,
+            )
         if not bool(torch.isfinite(loss)):
             raise ValueError("complete parent objective is nonfinite")
         loss.backward()
@@ -313,8 +399,9 @@ def backward_loaded_parent_batch(
             scores.detach().cpu(),
             len(labels.parents),
             retrieval_count,
-            int(verified.sum()),
+            0 if is_weak else int(included.sum()),
             len(labels.parents),
+            int(included.sum()) if is_weak else 0,
         )
     finally:
         system.train(was_training)

@@ -18,8 +18,9 @@ class ParentHumanClipRows:
     learning statistics enter this cache. The complete task must contain only
     development parents. No test rows or arbitrary additional text are loaded.
     Returned empty CF rows mean *no CF evidence*, not verified negative truth.
-    This serves base training and human-only evaluation; full CF training still
-    requires the actual blind two-human records and a separate admitted pool.
+    This serves base training and human-only evaluation. Residual CF training
+    requires a separate admitted pool: human-false evidence or explicitly weak
+    machine targets, never fabricated verification from these empty rows.
     """
 
     def __init__(self, task: ParentRetrievalTask, original: FrozenClipTextBatch):

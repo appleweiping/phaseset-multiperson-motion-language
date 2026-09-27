@@ -504,3 +504,53 @@ def coordination_objective(
         cf_positive_scores, cf_negative_scores, verified_negative_mask, margin=margin
     )
     return contrastive + cf_weight * counterfactual
+
+
+def weak_counterfactual_loss(
+    positive_scores: Tensor,
+    negative_scores: Tensor,
+    included_weak_mask: Tensor,
+    *,
+    margin: float = 0.2,
+) -> Tensor:
+    """Disclosed caption-derived training targets, never human-verified truth.
+
+    This uses the same registered margin formula but a distinct weak-label
+    entry point. An included bit admits a weak training target only; it is
+    not a false-event judgement, independent evaluation label or provenance.
+    """
+    if (
+        positive_scores.ndim != 1
+        or positive_scores.shape != negative_scores.shape
+        or included_weak_mask.shape != positive_scores.shape
+        or included_weak_mask.dtype != torch.bool
+        or positive_scores.device != negative_scores.device
+        or positive_scores.device != included_weak_mask.device
+    ):
+        raise ValueError("weak scores and bool inclusion mask need matching vectors/devices")
+    if not math.isfinite(margin) or margin < 0:
+        raise ValueError("margin must be finite and nonnegative")
+    penalties = F.softplus(margin + negative_scores - positive_scores)
+    if not bool(included_weak_mask.any()):
+        return (positive_scores.sum() + negative_scores.sum()) * 0.0
+    return penalties[included_weak_mask].mean()
+
+
+def weak_coordination_objective(
+    scores: Tensor,
+    positive_mask: Tensor,
+    *,
+    cf_positive_scores: Tensor,
+    cf_negative_scores: Tensor,
+    included_weak_mask: Tensor,
+    cf_weight: float = 0.2,
+    margin: float = 0.2,
+) -> Tensor:
+    """Human-only retrieval plus explicitly weak, training-only CF supervision."""
+    if not math.isfinite(cf_weight) or cf_weight < 0:
+        raise ValueError("cf_weight must be finite and nonnegative")
+    _, _, contrastive = variable_positive_symmetric_infonce(scores, positive_mask)
+    counterfactual = weak_counterfactual_loss(
+        cf_positive_scores, cf_negative_scores, included_weak_mask, margin=margin
+    )
+    return contrastive + cf_weight * counterfactual

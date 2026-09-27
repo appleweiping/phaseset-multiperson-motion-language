@@ -1,7 +1,7 @@
 {
   "schema": "phaseset-v2-relation-supervision-amendment-v1",
   "amendment_date": "2026-09-27",
-  "status": "DECLARED_IMPLEMENTATION_PENDING_NOT_TRAINING_ADMISSION",
+  "status": "WEAK_LOSS_SEAM_QUALIFIED_POOL_PENDING_NOT_TRAINING_ADMISSION",
   "reason": "No two new human annotators are available; the project owner requested existing annotations or LLM assistance instead of waiting.",
   "supersedes": "The requirement to obtain two new human annotators before independent development or training preparation can proceed.",
   "primary_retrieval": {

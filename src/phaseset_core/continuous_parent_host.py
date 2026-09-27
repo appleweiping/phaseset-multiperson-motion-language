@@ -1,7 +1,7 @@
 """Complete-parent FP32 base/residual optimizer, validation and restart host.
 
 This runs real updates, not the superseded window-unit training recipe. The
-private operator still admits rights, physical floors, human CF provenance,
+private operator still admits rights, physical floors, human or weak CF provenance,
 hardware/budget and the dated 87-stage matrix. Constructing this host supplies
 none of those authorities. Literature baselines remain separate implementations.
 No final-test interface exists here.
@@ -24,6 +24,7 @@ from .continuous_base_retrieval import ContinuousBaseRetrievalSystem
 from .continuous_capture import PreparedContinuousCapture
 from .continuous_parent_training import (
     ParentCounterfactualRows,
+    ParentWeakCounterfactualRows,
     backward_loaded_parent_batch,
     parent_epoch_batches,
     parent_input_capture,
@@ -54,9 +55,10 @@ class ParentTrainingSource(Protocol):
 
     ``view`` must return the entire source and reproduce its augmentation on
     replay. Evaluation views must be unaugmented. ``text`` starts with all
-    exact human rows; training-only, genuinely verified CFs may follow. The
-    two-human truth records are bound by the private input manifest, not by
-    the returned bool bits. No test or held-out rows may be loaded incidentally.
+    exact human rows; training-only verified or explicitly weak CFs may follow
+    through distinct row types. The input manifest binds their actual sources,
+    not bool bits. Weak labels are never human truth or evaluation ground truth.
+    No test or held-out rows may be loaded incidentally.
     """
 
     def view(
@@ -65,7 +67,7 @@ class ParentTrainingSource(Protocol):
 
     def text(
         self, labels: ParentRetrievalBatch, *, training: bool
-    ) -> tuple[FrozenClipTextBatch, ParentCounterfactualRows]: ...
+    ) -> tuple[FrozenClipTextBatch, ParentCounterfactualRows | ParentWeakCounterfactualRows]: ...
 
 
 @dataclass(frozen=True)
@@ -136,7 +138,7 @@ class ParentHostBindings:
     """Digests of the already admitted private execution inputs, not authority.
 
     The input manifest includes physical source/cache/floor/CLIP identities,
-    complete parent census, yaw rules and human verification provenance. The
+    complete parent census, yaw rules and human or weak-label provenance. The
     code manifest covers this host, the full scorer and private source adapter.
     Runtime binding comes from the real frozen environment qualification.
     """
@@ -582,6 +584,7 @@ class ContinuousParentTrainingHost:
                         parents=len(labels.parents),
                         human_rows=result.retrieval_caption_count,
                         verified_cf=result.verified_counterfactual_count,
+                        weak_cf=result.weak_counterfactual_count,
                         gradient_norm=float(norm),
                         learning_rate=lr,
                     )

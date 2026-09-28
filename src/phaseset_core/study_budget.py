@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from .execution import _write_once
 from .host import _AttemptLease
+from .study_storage import StudyStorageHold, StudyStorageProjection, check_study_storage
 
 
 PILOT_ALLOCATION = {"TMR-Set": 3, "WaMo-Set": 3, "MIME-Set": 3, "B2": 1, "PhaseSet-V2-head": 2}
@@ -252,9 +253,22 @@ class StudyBudget:
                 "scientific_or_launch_authority": False,
             }
 
-    def record_formal_step_limits(self, run_max_steps: dict[str, int], *, evidence: str):
+    def record_formal_step_limits(
+        self,
+        run_max_steps: dict[str, int],
+        *,
+        evidence: str,
+        storage_projection: StudyStorageProjection,
+        storage_directory: str | Path,
+        temporary_directory: str | Path,
+    ):
         """Record the already frozen external schedule, not freeze the science."""
         _text(evidence, "dated external freeze evidence")
+        if (
+            not isinstance(storage_projection, StudyStorageProjection)
+            or storage_projection.cumulative_remaining_bytes is None
+        ):
+            raise StudyStorageHold("formal freeze needs a cumulative storage forecast")
         with _AttemptLease.acquire(self.root):
             state = self._state()
             if state["step_limits"] is not None:
@@ -265,6 +279,9 @@ class StudyBudget:
                 raise StudyBudgetError("formal step limits must cover all 87 registered stages")
             for value in run_max_steps.values():
                 _integer(value, "formal max steps", minimum=1)
+            storage_admission = check_study_storage(
+                storage_directory, temporary_directory, storage_projection
+            )
             self._append(
                 self.root,
                 len(state["events"]),
@@ -272,6 +289,7 @@ class StudyBudget:
                 {
                     "run_max_steps": run_max_steps,
                     "evidence": evidence,
+                    "storage_admission": storage_admission,
                 },
             )
 

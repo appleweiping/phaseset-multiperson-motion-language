@@ -20,6 +20,12 @@ import time
 
 from .host import _AttemptLease, _write_once_json
 from .study_budget import StudyBudget
+from .study_storage import (
+    StudyStorageHold,
+    StudyStorageProjection,
+    check_study_storage,
+    current_free_bytes,
+)
 
 
 class StudyProcessError(RuntimeError):
@@ -28,6 +34,24 @@ class StudyProcessError(RuntimeError):
 
 class StudyResourceHold(StudyProcessError):
     """A requested card is not actually idle; do not preempt others."""
+
+
+STORAGE_MONITOR_SECONDS = 30.0
+
+
+@contextmanager
+def _storage_lease(budget, enabled):
+    """Serialize storage-admitted training across this study's cards."""
+    if not enabled:
+        yield
+        return
+    root = budget.root / "storage-lease"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lease = _AttemptLease.acquire(root)
+    try:
+        yield
+    finally:
+        lease.release()
 
 
 @contextmanager
@@ -193,6 +217,7 @@ def run_budgeted_process(
     cleanup_seconds: int,
     host_terminal_path: Path,
     bindings: dict,
+    storage_projection: StudyStorageProjection | None = None,
 ):
     """One immutable process attempt, never a retry or a scientific grant.
 
@@ -242,9 +267,29 @@ def run_budgeted_process(
     terminal = Path(host_terminal_path).resolve()
     if not cwd.is_dir() or terminal.exists():
         raise ValueError("existing working directory and fresh host terminal required")
+    purpose = reservation.get("purpose")
+    if purpose in ("pilot", "formal") and storage_projection is None:
+        raise StudyStorageHold("pilot/formal requires a family-specific storage projection")
+    if purpose == "formal" and (
+        storage_projection is None or storage_projection.cumulative_remaining_bytes is None
+    ):
+        raise StudyStorageHold("formal requires a reviewed cumulative remaining-byte forecast")
+    if storage_projection is not None and not environment.get("TMPDIR"):
+        raise StudyStorageHold("storage-admitted attempt needs an explicit TMPDIR")
+    storage = (
+        None
+        if storage_projection is None
+        else check_study_storage(root.parent, environment["TMPDIR"], storage_projection)
+    )
     check_gpu_free(gpu_uuids)
-    with _gpu_leases(budget, gpu_uuids), _termination_guard() as received_signals:
+    with (
+        _storage_lease(budget, storage_projection is not None),
+        _gpu_leases(budget, gpu_uuids),
+        _termination_guard() as received_signals,
+    ):
         check_gpu_free(gpu_uuids)
+        if storage_projection is not None:
+            storage = check_study_storage(root.parent, environment["TMPDIR"], storage_projection)
         root.mkdir(mode=0o700, exist_ok=False)
         lease = _AttemptLease.acquire(root)
         primary = None
@@ -258,6 +303,7 @@ def run_budgeted_process(
                     "gpu_uuids": gpu_uuids,
                     "bindings": bindings,
                     "host_terminal_path": str(terminal),
+                    "storage_admission": storage,
                     "scientific_or_launch_authority": False,
                 },
             )
@@ -267,11 +313,14 @@ def run_budgeted_process(
             ):
                 budget.reserve(**reservation)
                 process, started, timed_out, cleanup = None, None, False, None
+                storage_observations = 0
+                storage_min_available = None if storage is None else storage["available_bytes"]
                 try:
                     check_gpu_free(gpu_uuids)
                     if received_signals:
                         raise KeyboardInterrupt("controller terminated before child spawn")
                     started = time.monotonic()
+                    next_storage_sample = started + STORAGE_MONITOR_SECONDS
                     process = subprocess.Popen(
                         (
                             "/usr/bin/timeout",
@@ -293,6 +342,15 @@ def run_budgeted_process(
                     while not _leader_exited(process):
                         if received_signals:
                             raise KeyboardInterrupt("controller received termination signal")
+                        if storage_projection is not None and time.monotonic() >= next_storage_sample:
+                            available = current_free_bytes(root.parent)
+                            storage_observations += 1
+                            storage_min_available = min(storage_min_available, available)
+                            if available < storage_projection.monitor_floor_bytes:
+                                raise StudyStorageHold(
+                                    "RESOURCE_LIMIT: training fell below storage monitor floor"
+                                )
+                            next_storage_sample = time.monotonic() + STORAGE_MONITOR_SECONDS
                         if time.monotonic() - started >= timeout_seconds + kill_grace_seconds:
                             timed_out = True
                             break
@@ -385,6 +443,8 @@ def run_budgeted_process(
                     "cursor_error": cursor_error,
                     "actual_wall_seconds": wall,
                     "actual_gpu_seconds": wall * reservation["gpu_count"],
+                    "storage_monitor_observations": storage_observations,
+                    "storage_min_available_bytes": storage_min_available,
                     "cleanup": cleanup,
                     "primary_error": None if primary is None else repr(primary),
                     "scientific_or_launch_authority": False,

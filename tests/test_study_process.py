@@ -15,6 +15,7 @@ import pytest
 from phaseset_core.host import _AttemptLease, HostConfigurationError
 import phaseset_core.study_process as module
 from phaseset_core.study_process import StudyProcessError, StudyResourceHold, run_budgeted_process
+from phaseset_core.study_storage import StudyStorageHold, StudyStorageProjection
 from test_study_budget import create as create_budget
 
 
@@ -88,6 +89,78 @@ def test_non_linux_rejects_before_any_launch(tmp_path, monkeypatch):
     with pytest.raises(StudyProcessError, match="requires Linux"):
         run_budgeted_process(budget, **args)
     assert not args["process_directory"].exists()
+    assert budget.summary()["unsettled_attempt_ids"] == []
+
+
+@linux
+def test_training_requires_storage_bound_before_attempt_or_budget(tmp_path):
+    budget = create_budget(tmp_path)
+    args = inputs(tmp_path)
+    args["reservation"]["purpose"] = "pilot"
+    with pytest.raises(StudyStorageHold, match="family-specific"):
+        run_budgeted_process(budget, **args)
+    assert not args["process_directory"].exists()
+    assert budget.summary()["usage"]["pilot_reservations"] == 0
+
+
+@linux
+def test_formal_requires_cumulative_forecast_before_attempt(tmp_path):
+    budget = create_budget(tmp_path)
+    args = inputs(tmp_path)
+    args["reservation"]["purpose"] = "formal"
+    args["environment"]["TMPDIR"] = str(tmp_path)
+    args["storage_projection"] = StudyStorageProjection(1, 0, free_floor_bytes=0)
+    with pytest.raises(StudyStorageHold, match="cumulative"):
+        run_budgeted_process(budget, **args)
+    assert not args["process_directory"].exists()
+
+
+@linux
+def test_profile_storage_snapshot_is_bound_into_launch(tmp_path):
+    budget = create_budget(tmp_path)
+    args = inputs(tmp_path)
+    args["environment"]["TMPDIR"] = str(tmp_path)
+    args["storage_projection"] = StudyStorageProjection(1, 0, free_floor_bytes=0)
+    result = run_budgeted_process(budget, **args)
+    assert result["outcome"] == "COMPLETED"
+    launch = json.loads((args["process_directory"] / "launch.json").read_text())
+    assert launch["storage_admission"]["required_free_bytes"] == 6
+    assert launch["storage_admission"]["available_bytes"] >= 6
+
+
+@linux
+def test_storage_admitted_process_is_serialized_before_attempt(tmp_path):
+    budget = create_budget(tmp_path)
+    args = inputs(tmp_path)
+    args["environment"]["TMPDIR"] = str(tmp_path)
+    args["storage_projection"] = StudyStorageProjection(1, 0, free_floor_bytes=0)
+    lease_root = budget.root / "storage-lease"
+    lease_root.mkdir()
+    with _AttemptLease.acquire(lease_root):
+        with pytest.raises(HostConfigurationError):
+            run_budgeted_process(budget, **args)
+    assert not args["process_directory"].exists()
+
+
+@linux
+def test_storage_monitor_stops_only_owned_child_and_records_failure(tmp_path, monkeypatch):
+    budget = create_budget(tmp_path)
+    args = inputs(
+        tmp_path,
+        body="time.sleep(0.4); terminal.write_text(json.dumps({'global_step':0,'outcome':'COMPLETED'}))",
+    )
+    args["environment"]["TMPDIR"] = str(tmp_path)
+    args["storage_projection"] = StudyStorageProjection(1, 0, free_floor_bytes=100)
+    monkeypatch.setattr(module, "STORAGE_MONITOR_SECONDS", 0.02)
+    monkeypatch.setattr(module, "current_free_bytes", lambda _path: 0)
+    with pytest.raises(StudyStorageHold, match="storage monitor floor"):
+        run_budgeted_process(budget, **args)
+    result = report(args)
+    assert result["outcome"] == "FAILED"
+    assert "storage monitor floor" in result["primary_error"]
+    assert result["storage_monitor_observations"] >= 1
+    assert result["storage_min_available_bytes"] == 0
+    assert result["cleanup"]["owned_group_and_cuda_exit_verified"]
     assert budget.summary()["unsettled_attempt_ids"] == []
 
 

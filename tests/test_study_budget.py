@@ -11,6 +11,7 @@ import pytest
 
 from phaseset_core.host import HostConfigurationError
 from phaseset_core.study_budget import PILOT_ALLOCATION, StudyBudget, StudyBudgetError
+from phaseset_core.study_storage import StudyStorageProjection
 
 
 def matrix():
@@ -82,7 +83,13 @@ def formal_steps():
 
 def freeze(budget):
     budget.record_formal_step_limits(
-        formal_steps(), evidence="synthetic schedule; NOT scientific freeze"
+        formal_steps(),
+        evidence="synthetic schedule; NOT scientific freeze",
+        storage_projection=StudyStorageProjection(
+            1, 0, free_floor_bytes=0, cumulative_remaining_bytes=1
+        ),
+        storage_directory=budget.root,
+        temporary_directory=budget.root,
     )
 
 
@@ -358,7 +365,15 @@ def test_formal_needs_all_87_step_limits_once_and_exact_seed_schedule(tmp_path):
     incomplete = formal_steps()
     incomplete.pop("V2-087")
     with pytest.raises(StudyBudgetError, match="all 87"):
-        budget.record_formal_step_limits(incomplete, evidence="analytic incomplete schedule")
+        budget.record_formal_step_limits(
+            incomplete,
+            evidence="analytic incomplete schedule",
+            storage_projection=StudyStorageProjection(
+                1, 0, free_floor_bytes=0, cumulative_remaining_bytes=1
+            ),
+            storage_directory=budget.root,
+            temporary_directory=budget.root,
+        )
     freeze(budget)
     with pytest.raises(StudyBudgetError, match="immutable"):
         freeze(budget)

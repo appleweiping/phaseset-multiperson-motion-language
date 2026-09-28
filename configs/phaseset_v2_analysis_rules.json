@@ -1,0 +1,130 @@
+{
+  "schema": "phaseset-v2-pretest-analysis-rules-v1",
+  "status": "DRAFT_PRE_PILOT_NO_SCORES_REVIEW_REVISION",
+  "decision_source": "2026-09-26 PhaseSet-V2 amendment plus 2026-09-27 relation-supervision amendment",
+  "scope": "rules only; not the final data, checkpoint, comparator, gallery, or score manifest",
+  "task": {
+    "primary_text_source": "original_official_human_holistic_rows_only",
+    "primary_motion_unit": "complete_parent_capture",
+    "test_parent_count_expected": 40,
+    "test_human_caption_rows_expected": 200,
+    "test_parent_group_size_counts_expected": {"3": 16, "4": 24},
+    "test_parent_component_counts_expected": {"C09": 16, "C11": 8, "C15": 16},
+    "positive_rule": "each official caption row is positive only for its sealed parent family",
+    "primary_metric": "0.5 * (capture_macro_T2M_R1 + capture_macro_M2T_any_positive_R1)",
+    "query_scoring": "rank each trained seed separately; never average logits across seeds",
+    "statistical_unit": "parent_capture_not_released_episode_or_caption",
+    "sealed_test_uses_machine_weak_text": false
+  },
+  "pilot_comparator": {
+    "train_components": ["C01", "C02"],
+    "validation_components": ["C03"],
+    "pilot_training_seed": 1729,
+    "population": "all_34_C01_C02_complete_train_parents_and_all_15_C03_complete_validation_parents_official_human_rows_only",
+    "families": ["TMR-Set", "WaMo-Set", "MIME-Set"],
+    "candidate_budget_per_family": 3,
+    "candidate_metric": "C03_complete_parent_human_only_primary_metric",
+    "checkpoint_tie": "earliest_validation_checkpoint",
+    "within_family_exact_tie": "paper_learning_rate_then_half_then_double",
+    "between_family_exact_tie": "fewer_trainable_parameters_then_lower_measured_parent_latency_then_lexicographic_system_id",
+    "fidelity_qualification": [
+      "native_complete_parent_input_and_official_human_targets",
+      "source_to_paper_and_original_reference_input_output_loss_crosswalk_recorded_per_family",
+      "original_task_sanity_fixture_runs_and_expected_input_output_loss_semantics_match_original_reference_or_method_is_unqualified",
+      "all_paper_essential_objective_terms_present_with_nonzero_gradients_and_documented_multiperson_adaptation",
+      "tiny_original_task_overfit_or_equivalent_original_reference_sanity_passes_before_pilot_selection",
+      "finite_losses_and_validation_scores",
+      "successful_terminal_or_predeclared_early_stop",
+      "no_training_or_selection_on_sealed_test"
+    ],
+    "selection_rule": "best_C03_primary_metric_among_qualified_candidates_then_fixed_ties",
+    "all_unqualified_action": "no_B_star_and_no_main_superiority_claim",
+    "selected_B_star": null,
+    "selected_candidate": null,
+    "selection_status": "PENDING_PILOT_NOT_CHOSEN"
+  },
+  "v2_head_pilot_selection": {
+    "predecessor": "same_selected_B2_anchor_checkpoint_for_both_candidates",
+    "candidate_ids": ["v2-cf-half", "v2-cf-fixed"],
+    "candidate_metric": "C03_complete_parent_human_only_primary_metric",
+    "checkpoint_tie": "earliest_validation_checkpoint",
+    "candidate_exact_tie": "v2-cf-fixed_then_v2-cf-half",
+    "selection_rule": "best_C03_primary_metric_among_qualified_candidates_then_fixed_tie",
+    "qualification": "same_predecessor_population_steps_human_validation_and_finite_training_terminal",
+    "failed_both_action": "no_V2_configuration_and_no_formal_V2_launch",
+    "selected_candidate": null,
+    "status": "PENDING_PILOT_NOT_CHOSEN"
+  },
+  "formal_comparison": {
+    "training_seeds": [1729, 2718, 31415],
+    "one_comparator_identity_for_all_seeds": true,
+    "missing_or_invalid_seed": "keep_terminal_and_report_incomplete; three_seed_inference_and_corresponding_claim_UNASSESSABLE; do_not_drop_replace_or_recalculate_with_remaining_seeds",
+    "failed_comparator": "do_not_substitute_weaker_test_chosen_method; main_claim_unassessable",
+    "checkpoint_selection": "development_validation_only_before_any_formal_test_score",
+    "terminal_exclusions": "must_be_named_and_frozen_before_formal_test; no_post_score_exclusion",
+    "test_passes": 1
+  },
+  "inference": {
+    "resampling_unit": "parent_capture",
+    "seed_reduction": "mean_three_seed_paired_parent_effects_before_bootstrap",
+    "draws": 100000,
+    "rng": "numpy_PCG64",
+    "resampling_seed": 20260928,
+    "same_parent_index_stream_for_all_comparisons": true,
+    "confidence": "two_sided_95_percent_percentile",
+    "lower_sorted_zero_based_index": 2499,
+    "upper_sorted_zero_based_index": 97499,
+    "raw_p_h1": "one_sided_bootstrap_tail_(1+count(delta_draw<=0.02))/100001",
+    "h1_decision_calibration": "intentional_conjunctive_conservative_gate_one_sided_p_at_0.05_and_two_sided_95_percent_lower_above_0.02; interval_condition_is_stricter_than_the_p_threshold",
+    "raw_p_a1_a9": "two_sided_bootstrap_tail_min(1,2*min((1+count(delta_draw<=0))/100001,(1+count(delta_draw>=0))/100001))",
+    "holm_family": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"],
+    "holm_alpha": 0.05,
+    "scope_limit": "conditional_on_fixed_three_participant_components_models_gallery_and_seeds_not_population_generalization"
+  },
+  "claim_gates": {
+    "H1": {
+      "comparison": "PhaseSet-V2_minus_single_pilot_frozen_B_star",
+      "direction": "positive",
+      "null_margin_pp": 2,
+      "point_estimate_at_least_pp": 2,
+      "one_sided_raw_p_at_most": 0.05,
+      "confidence_lower_strictly_above_margin": true,
+      "rule": "all_conditions_required_for_superiority_language"
+    },
+    "A1_to_A9": {
+      "comparison": "PhaseSet-V2_minus_named_ablation_on_same_B2_and_human_task",
+      "null_margin_pp": 0,
+      "direction": "positive",
+      "raw_p_sidedness": "two_sided",
+      "holm_adjusted_p_at_most": 0.05,
+      "confidence_lower_strictly_positive": true,
+      "all_nine_reported_whether_or_not_any_pass": true
+    },
+    "topology_sensitive_package": "requires_A3_and_A4_gates; does_not_isolate_incidence_from_endpoint_binding",
+    "phase_family": "requires_A5_gate; no_claim_of_causal_delay_or_human_relation_truth",
+    "weak_counterfactual_training_utility": "A8_gate_may_support_retrieval_effect_only_not_verified_motion_falsehood",
+    "generic_local_relation": "A7_gate_required_before_claiming_more_than_generic_local_capacity",
+    "calibration_only": "A9_gate_required_before_claiming_more_than_scoring_calibration",
+    "temporal_order": "A2_does_not_isolate_local_from_capture_order",
+    "relation_challenge": "UNASSESSABLE_without_matching_independent_human_labels"
+  },
+  "secondary": {
+    "metrics": ["R@3", "R@5", "R@10", "Hard-32", "K_strata", "component_strata", "three_development_folds", "Inter-X"],
+    "three_fold_target": "positive_effect_in_each_prespecified_development_fold_descriptive_only",
+    "inter_x_scope": "dyadic_trained_applicability_not_Embody_zero_shot",
+    "nonperiodic_regression_target_pp": 1,
+    "nonperiodic_stratum_definition": "PENDING_PRETEST_FREEZE_OR_MARK_UNASSESSABLE",
+    "inference_cost_ratio_target": 2,
+    "cost_protocol": "PENDING_ACTUAL_GPU_PROFILE_THEN_FREEZE_HARDWARE_WORKLOAD_BATCH_REPETITIONS_P50_P95_PEAK_MEMORY_COLD_WARM",
+    "no_secondary_metric_replaces_primary": true
+  },
+  "negative_result_policy": {
+    "H1_fails": "no_superiority_claim; deliver_honest_negative_paper_or_technical_report",
+    "A3_or_A4_fails": "no_topology_sensitive_package_attribution",
+    "A5_fails": "no_phase_family_attribution",
+    "A7_or_A9_fails": "no_more_than_generic_local_or_calibration_claim_respectively",
+    "A8_fails": "no_weak_counterfactual_utility_claim",
+    "machine_relation_labels": "never_independent_human_truth",
+    "no_new_seeds_data_or_test_tuning": true
+  }
+}

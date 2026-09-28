@@ -23,9 +23,12 @@
     "epoch_expansion_must_precede_formal_freeze": true
   },
   "primary_split": {
-    "train_captures": 400,
-    "validation_captures": 96,
-    "test_captures": 76,
+    "train_released_episodes": 400,
+    "validation_released_episodes": 96,
+    "test_released_episodes": 76,
+    "effective_holistic_task_released_episodes": {"train": 398, "validation": 96, "test": 75},
+    "sealed_test_parent_captures": 40,
+    "sealed_test_official_human_rows": 200,
     "final_test_components": 3,
     "validation_component_labels": ["C00"],
     "sealed_test_component_labels": ["C09", "C11", "C15"]
@@ -56,7 +59,7 @@
     "coordination_text_adapter": "shared_512_GELU_512_on_frozen_CLIP",
     "human_holistic_caption_field": "all_scene_explained_rows_no_questionnaire_fusion",
     "retrieval_positive_identity": "admitted_parent_annotation_family_not_released_segment_or_actor_set",
-    "parent_capture_task_freeze": "PENDING_lineage_aggregation_gallery_and_statistics",
+    "parent_capture_task_freeze": "PRELEARNING_PARENT_SOURCE_AND_HUMAN_POSITIVE_FAMILY_SEALED_PHYSICAL_GALLERIES_AND_STATISTICS_PENDING",
     "no_periodic_support": "global_branch_fallback",
     "head_parameter_relative_tolerance": 0.05,
     "dummy_capacity_parameters": false,
@@ -67,12 +70,14 @@
   "frozen_strong_baseline": null,
   "success_thresholds": {
     "retrieval_mean_r1_gain_pp": 2,
-    "relation_challenge_gain_pp": 5,
     "positive_group_folds": 3,
+    "positive_group_folds_role": "descriptive_development_target_not_independent_inference",
     "nonperiodic_max_regression_pp": 1,
     "inference_cost_ratio": 2
   },
-  "relation_challenge": {
+  "historical_superseded_relation_challenge": {
+    "status": "UNASSESSABLE_WITHOUT_MATCHING_INDEPENDENT_HUMAN_LABELS_NOT_AN_ACTIVE_SUCCESS_GATE",
+    "historical_gain_pp": 5,
     "minimum_verified_text_pairs": 200,
     "minimum_real_captures": 100,
     "minimum_participant_components": 8,

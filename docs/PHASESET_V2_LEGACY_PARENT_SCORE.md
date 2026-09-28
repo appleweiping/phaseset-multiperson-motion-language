@@ -36,7 +36,19 @@ provenance or run budget by itself; the private operator must verify those
 inputs and the real server qualification before formal training. No final-test
 interface is added.
 
+`build_v2_legacy_control` constructs only registered V2-019/020/021 (old)
+and V2-049/050/051 (A9) rows from the exact frozen matrix. It reuses the
+same validation-selected B2 checkpoint/terminal verifier as the V2 residual
+factory, requires the same-seed B2 predecessor and main population, and
+checks that the typed old scalar floor names the admitted training source.
+`make_v2_legacy_parent_host` then binds that build, floor, predecessor and
+source to the complete-parent host. The build explicitly carries
+`launch_authority=False`: construction and synthetic tests cannot admit a
+native optimizer step, decide the pilot schedule, or turn an unverified floor
+receipt into real-data evidence.
+
 Data-free tests check both modes' score decomposition, frozen B2 gradients,
 floor mutation rejection, unbound-host rejection, guarded score/VJP replay and
-short-run mislabeling rejection on synthetic inputs. Passing those checks is
+short-run mislabeling rejection, and six registered factory rows on synthetic
+inputs. Passing those checks is
 software qualification, not a retrieval result or evidence for a paper claim.

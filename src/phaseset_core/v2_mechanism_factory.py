@@ -31,6 +31,8 @@ from .study_storage import V2_MATRIX_SHA256
 from .parent_retrieval_task import ParentRetrievalTask
 from .training import (
     OFFICIAL_SEEDS,
+    BaseRetrievalSystem,
+    CheckpointArtifact,
     _load_torch_checkpoint,
     _stable_hash,
     build_registered_base_training_system,
@@ -201,22 +203,14 @@ def make_v2_b2_base_host(
     return make_v2_registered_base_host(matrix_bytes, run_id, task, source, config, bindings)
 
 
-def build_v2_mechanism(
-    matrix_bytes: bytes,
-    run_id: str,
-    *,
+def _load_selected_b2_predecessor(
+    matrix: dict,
+    row: dict,
     selected_b2: V2SelectedB2Checkpoint,
-    training_source_manifest_sha256: str,
-    dct_floor_receipt: DctFloorReceipt | None = None,
-    speed_floor_receipt: SpeedFloorReceipt | None = None,
-    checkpoint_blocks: bool = True,
-) -> V2MechanismBuild:
-    """Construct the exact implemented mechanism, never a launch decision."""
-    matrix, row = _registered_row(matrix_bytes, run_id)
+) -> tuple[BaseRetrievalSystem, CheckpointArtifact, dict]:
+    """One terminal/checkpoint authority path shared by registered residuals."""
     if type(selected_b2) is not V2SelectedB2Checkpoint:
         raise V2MechanismHold("validation-selected B2 artifact is required")
-    if not _sha256_key(training_source_manifest_sha256):
-        raise V2MechanismHold("admitted training-source manifest digest is required")
     payload, artifact = _load_torch_checkpoint(
         selected_b2.path, expected_sha256=selected_b2.sha256
     )
@@ -289,6 +283,26 @@ def build_v2_mechanism(
         frozen_b2.load_state_dict(base_state, strict=True)
     except (RuntimeError, ValueError) as error:
         raise V2MechanismHold("selected B2 weights do not match the B2 architecture") from error
+    return frozen_b2, artifact, manifest
+
+
+def build_v2_mechanism(
+    matrix_bytes: bytes,
+    run_id: str,
+    *,
+    selected_b2: V2SelectedB2Checkpoint,
+    training_source_manifest_sha256: str,
+    dct_floor_receipt: DctFloorReceipt | None = None,
+    speed_floor_receipt: SpeedFloorReceipt | None = None,
+    checkpoint_blocks: bool = True,
+) -> V2MechanismBuild:
+    """Construct the exact implemented mechanism, never a launch decision."""
+    matrix, row = _registered_row(matrix_bytes, run_id)
+    if not _sha256_key(training_source_manifest_sha256):
+        raise V2MechanismHold("admitted training-source manifest digest is required")
+    frozen_b2, artifact, manifest = _load_selected_b2_predecessor(
+        matrix, row, selected_b2
+    )
     system_id = row["system"]
     if system_id != "A6" and dct_floor_receipt is not None:
         raise V2MechanismHold("a DCT floor receipt may only enter A6")

@@ -93,7 +93,8 @@ class LiteratureParentTrainingHost(ContinuousParentTrainingHost):
             raise ValueError("literature models train independently, not on a frozen B2 checkpoint")
         self._is_base = True  # independent trainable model, shared loop has no anchor
         self._method = method
-        self._initialize(system, task, source, config, bindings)
+        self._run_identity = None  # literature rows have no V2 mechanism predecessor
+        self._initialize(system, task, source, config, bindings, None)
         self._manifest.update(
             schema="phaseset-literature-parent-host-v1",
             literature_method=method,

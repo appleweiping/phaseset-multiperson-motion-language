@@ -289,6 +289,7 @@ class StudyBudget:
         family: str | None = None,
         predecessor_attempt_id: str | None = None,
         root_cause: str | None = None,
+        future_budget_floor_gpu_seconds: float | None = None,
     ):
         """Reserve the full timeout+kill-grace envelope BEFORE child spawning."""
         for value, name in (
@@ -306,6 +307,10 @@ class StudyBudget:
         _integer(gpu_count, "allocated GPU count")
         _integer(wall_time_limit_seconds, "wall envelope", minimum=1)
         _integer(planned_steps, "planned optimizer steps")
+        if future_budget_floor_gpu_seconds is not None:
+            if purpose != "pilot":
+                raise StudyBudgetError("future study floor applies only to pilot admission")
+            _seconds(future_budget_floor_gpu_seconds, "future study GPU floor")
         if purpose == "profile" and planned_steps != 0:
             raise StudyBudgetError("optimizer training cannot be hidden as an uncounted profile")
         if purpose != "profile" and (gpu_count < 1 or planned_steps < 1):
@@ -318,6 +323,15 @@ class StudyBudget:
             usage = state["usage"]
             if usage["gpu_seconds"] + state["reserved_gpu_seconds"] + cost > LIMITS["gpu_seconds"]:
                 raise StudyBudgetError("study GPU budget exhausted or fully reserved")
+            if (
+                future_budget_floor_gpu_seconds is not None
+                and usage["gpu_seconds"]
+                + state["reserved_gpu_seconds"]
+                + cost
+                + future_budget_floor_gpu_seconds
+                > LIMITS["gpu_seconds"]
+            ):
+                raise StudyBudgetError("pilot plus future study floor exceeds GPU budget")
             if purpose != "formal" and (
                 predecessor_attempt_id is not None or root_cause is not None
             ):

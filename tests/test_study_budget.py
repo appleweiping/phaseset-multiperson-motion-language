@@ -327,6 +327,30 @@ def test_pilot_admission_is_atomic_with_journal_cursor_and_formal_freeze(tmp_pat
         )
 
 
+def test_pilot_future_cost_floor_uses_current_locked_journal_not_old_summary(tmp_path):
+    budget = create(tmp_path)
+    old = budget.summary()
+    assert old["usage"]["gpu_seconds"] == 34
+    pilot_cost = 2 * 40
+    future_floor = 300 * 3600 - 34 - pilot_cost - 20
+    reserve(budget, attempt="profile-after-forecast")
+    settle(budget, attempt="profile-after-forecast", actual_wall_seconds=10.5)
+    assert budget.summary()["usage"]["gpu_seconds"] == 55
+    with pytest.raises(StudyBudgetError, match="future study floor"):
+        reserve(
+            budget,
+            attempt="pilot-after-profile",
+            run_id="pilot-after-profile",
+            purpose="pilot",
+            family="TMR-Set",
+            planned_steps=12,
+            future_budget_floor_gpu_seconds=future_floor,
+        )
+    assert budget.summary()["usage"]["pilot_reservations"] == 0
+    with pytest.raises(StudyBudgetError, match="only to pilot"):
+        reserve(budget, attempt="profile-with-floor", future_budget_floor_gpu_seconds=0)
+
+
 def test_formal_needs_all_87_step_limits_once_and_exact_seed_schedule(tmp_path):
     budget = create(tmp_path)
     with pytest.raises(StudyBudgetError, match="freeze"):

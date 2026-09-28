@@ -116,6 +116,7 @@ class ContinuousRetrievalSystem(nn.Module):
         dct_floor_receipt: DctFloorReceipt | None = None,
         incidence_shuffle_seed: int | None = None,
         order_free: bool = False,
+        pair_bag: bool = False,
         checkpoint_blocks: bool = True,
         base_window_batch_size: int = 1,
         base_edge_budget: int = 32768,
@@ -137,6 +138,8 @@ class ContinuousRetrievalSystem(nn.Module):
             raise ValueError("A4 incidence shuffle is a separate phase control, not A6")
         if relation_kind != "phase" and order_free:
             raise ValueError("A2 order-free matching is a separate phase control, not A6")
+        if relation_kind != "phase" and pair_bag:
+            raise ValueError("A3 pair-bag matching is a separate phase control, not A6")
         if relation_kind == "phase":
             if dct_floor_receipt is not None:
                 raise ValueError("DCT receipt must not enter the phase system")
@@ -161,6 +164,7 @@ class ContinuousRetrievalSystem(nn.Module):
             strip_phase=strip_phase,
             incidence_shuffle_seed=incidence_shuffle_seed,
             order_free=order_free,
+            pair_bag=pair_bag,
             checkpoint_blocks=checkpoint_blocks,
         )
         self.text_adapter = nn.Sequential(nn.Linear(512, 512), nn.GELU(), nn.Linear(512, 512))
@@ -179,6 +183,8 @@ class ContinuousRetrievalSystem(nn.Module):
             payload["incidence_shuffle_seed"] = self.coordination.incidence_shuffle_seed
         if self.coordination.order_free:
             payload["order_free"] = True
+        if self.coordination.pair_bag:
+            payload["pair_bag"] = True
         if not self.coordination.use_topology:
             payload["use_topology"] = False
         if self.coordination.strip_phase:

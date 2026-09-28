@@ -205,6 +205,7 @@ class TemporalIncidenceEncoder(nn.Module):
         strip_phase: bool = False,
         incidence_shuffle_seed: int | None = None,
         order_free: bool = False,
+        pair_bag: bool = False,
         checkpoint_blocks: bool = True,
     ) -> None:
         super().__init__()
@@ -220,11 +221,17 @@ class TemporalIncidenceEncoder(nn.Module):
             order_free and (not use_topology or strip_phase or incidence_shuffle_seed is not None)
         ):
             raise ValueError("A2 must remove order from the otherwise full phase system")
+        if type(pair_bag) is not bool or (
+            pair_bag
+            and (not use_topology or strip_phase or incidence_shuffle_seed is not None or order_free)
+        ):
+            raise ValueError("A3 must pool pair packets in the otherwise full phase system")
         self.width = width
         self.use_topology = use_topology
         self.strip_phase = strip_phase
         self.incidence_shuffle_seed = incidence_shuffle_seed
         self.order_free = order_free
+        self.pair_bag = pair_bag
         self.checkpoint_blocks = checkpoint_blocks
         temporal_encoder = OrderFreeTemporalEncoder if order_free else MaskedTemporalEncoder
         self.actor_projection = nn.Sequential(nn.Linear(ACTOR_FEATURE_DIM, width), nn.GELU())
@@ -323,6 +330,18 @@ class TemporalIncidenceEncoder(nn.Module):
         degree = (left + right) @ mask.to(torch.float64)
         return total, second, degree
 
+    def _bag_block(
+        self, field: RelationField, hidden: Tensor, start: int, stop: int
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """A3 global packet moments without assigning values to actor nodes."""
+        a, b, _endpoints, mask = self._half_edges(field, hidden, start, stop)
+        a64, b64 = a.to(torch.float64), b.to(torch.float64)
+        return (
+            (a64 + b64).sum(dim=0),
+            (a64.square() + b64.square()).sum(dim=0),
+            2 * mask.to(torch.float64).sum(dim=0),
+        )
+
     def _edge_block(
         self,
         field: RelationField,
@@ -361,6 +380,45 @@ class TemporalIncidenceEncoder(nn.Module):
         # relations. A field spans one capture; no set pooling or window reset
         # is inserted between local patches along a consistent actor track.
         hidden, _ = self.actor_temporal(hidden, actor_mask)
+        if self.pair_bag:
+            total = torch.zeros((field.patch_count, self.width), dtype=torch.float64, device=device)
+            second = torch.zeros_like(total)
+            count = torch.zeros(field.patch_count, dtype=torch.float64, device=device)
+            for start in range(0, field.pair_count, 64):
+                stop = min(field.pair_count, start + 64)
+
+                def bag_block(value, block_start=start, block_stop=stop):
+                    return self._bag_block(field, value, block_start, block_stop)
+
+                local_total, local_second, local_count = self._run_block(bag_block, hidden)
+                total, second, count = (
+                    total + local_total,
+                    second + local_second,
+                    count + local_count,
+                )
+            mean = total / count.clamp_min(1)[:, None]
+            m2 = (second / count.clamp_min(1)[:, None] - mean.square()).clamp_min(0)
+            actor_count = actor_mask.sum(dim=0).clamp_min(1).to(torch.float64)
+            actor_mean = (
+                hidden.to(torch.float64) * actor_mask[..., None]
+            ).sum(dim=0) / actor_count[:, None]
+            coverage = count / (field.actor_count * (field.actor_count - 1))
+            stats = torch.cat(
+                (
+                    actor_mean.to(hidden.dtype),
+                    mean.to(hidden.dtype),
+                    m2.to(hidden.dtype),
+                    coverage[:, None].to(hidden.dtype),
+                    (1 - coverage)[:, None].to(hidden.dtype),
+                ),
+                dim=-1,
+            )
+            topology_mask = (count >= 4)[None].expand(field.actor_count, -1)
+            nodes = self.node_mlp(stats)[None].expand(field.actor_count, -1, -1)
+            nodes = torch.where(topology_mask[..., None], nodes, torch.zeros_like(nodes))
+            nodes, _ = self.node_temporal(nodes, topology_mask)
+            nodes = torch.where(topology_mask[..., None], nodes, torch.zeros_like(nodes))
+            return hidden, nodes, topology_mask
         shape = (field.actor_count, field.patch_count, self.width)
         total = torch.zeros(shape, dtype=torch.float64, device=device)
         second = torch.zeros_like(total)

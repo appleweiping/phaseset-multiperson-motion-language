@@ -88,6 +88,10 @@ The [A2 order-free control](docs/PHASESET_V2_A2_ORDER_FREE.md) replaces all
 four learned temporal GRU paths with near-equal-capacity independent patch
 MLPs and masked means while retaining the same physical phase input. It tests
 the contribution of learned order, not the existence of physical phase.
+The [A3 capacity-matched pair-bag control](docs/PHASESET_V2_A3_PAIR_BAG.md)
+keeps the full head's active node and edge modules but pools relation packets
+without assigning them to actor nodes. It is distinct from the legacy
+topology-off pair-only diagnostic and has no reported retrieval result yet.
 [TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
 complete original VAE objectives with disclosed full-parent group adaptation;
 its pinned frozen language loader is not a substitute for native learning.

@@ -18,7 +18,7 @@ replacement and introduces no inactive capacity padding.
 All invalid patch outputs are hard-gated to exact zero after the MLP. A2
 cannot be combined with the separate A3/A4/A5/A6 controls, and its model
 checkpoint records the order-free identity. The same tensor-only checkpoint
-identity also distinguishes the pre-existing A3 topology-off and A5
+identity also distinguishes A3 pair-bag, the legacy topology-off switch and A5
 phase-stripped switches from the full model. The full model's previous state
 payload remains unchanged.
 

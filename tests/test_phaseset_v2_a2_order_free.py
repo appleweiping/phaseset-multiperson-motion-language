@@ -100,9 +100,10 @@ def test_a2_a3_a5_checkpoint_control_identity_and_a6_exclusion() -> None:
 
     full = system()
     a2 = system(order_free=True)
-    a3 = system(use_topology=False)
+    a3 = system(pair_bag=True)
+    legacy_pair_only = system(use_topology=False)
     a5 = system(strip_phase=True)
-    for variant in (a2, a3, a5):
+    for variant in (a2, a3, legacy_pair_only, a5):
         with pytest.raises(ValueError, match="relation kind"):
             variant.set_extra_state(full.get_extra_state())
         with pytest.raises(ValueError, match="relation kind"):

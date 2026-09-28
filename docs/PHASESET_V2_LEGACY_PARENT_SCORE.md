@@ -14,12 +14,21 @@ Two score modes share this representation:
   learned cosine calibration. This changes score scale, not relation features
   or the old text-band projection architecture.
 
-The mode, window batching, edge chunk and scalar-floor value hash are bound to
-the scorer state. The generic complete-parent training host deliberately does
-**not** accept this scorer yet. A floor value hash is not proof that the floor
-was fitted from the admitted training population. A typed training-only scalar
-floor receipt, registered old/A9 run identities and their predecessor binding
-are separate prerequisites before formal training or sealed evaluation.
+The mode, window batching, edge chunk, scalar-floor values and typed floor
+receipt are bound to the scorer state. The receipt's method is the unchanged
+old 20 Hz five-speed-channel Morlet actor-local power, with a linear fifth
+percentile per band over every accepted actor-window in the declared training
+parent census. Observed exact-zero powers count; absent Morlet support does
+not. Each band's observed and missing counts must total the actor-window
+census. The receipt binds the private source-manifest digest, population,
+physical kernel identity, floor bytes and diagnostics. The data-free test uses
+a synthetic receipt and does not imply that native floors were fitted.
+
+The generic complete-parent training host deliberately does **not** accept
+this scorer yet. The registered real training-only scalar-floor receipt,
+old/A9 run identities, predecessor checkpoint binding and score-plus-VJP host
+qualification are separate prerequisites before formal training or sealed
+evaluation.
 
 The data-free CPU qualification checks both modes' score decomposition, frozen
 B2 gradients, floor mutation rejection, host rejection, and the existing old

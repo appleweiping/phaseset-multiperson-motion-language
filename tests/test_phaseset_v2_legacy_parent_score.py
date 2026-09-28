@@ -14,21 +14,43 @@ from phaseset_core.capture_validation import _validate_text_batch
 from phaseset_core.continuous_parent_host import ContinuousParentTrainingHost
 from phaseset_core.controls import PhaseSetSystem
 from phaseset_core.legacy_continuous_retrieval import LegacyWholeCaptureRetrievalSystem
+from phaseset_core.legacy_scalar_calibration import (
+    LEGACY_SCALAR_FLOOR_SCHEMA,
+    LegacyScalarFloorReceipt,
+    legacy_scalar_config_sha256,
+)
 from phaseset_core.periodic import BAND_COUNT
 from test_continuous_parent_host import _setup
 from test_continuous_parent_training import _case
 
 
 def _legacy(base, mode: str) -> LegacyWholeCaptureRetrievalSystem:
+    floors = np.full((BAND_COUNT,), 1e-10, dtype=np.float64)
     encoder = PhaseSetSystem(
         "08",
         embedding_dim=512,
         hidden_dim=8,
-        energy_floors=np.full((BAND_COUNT,), 1e-10, dtype=np.float64),
+        energy_floors=floors,
         edge_budget=64,
     )
+    # Synthetic binding fixture only: this is not an admitted native training receipt.
+    receipt = LegacyScalarFloorReceipt(
+        LEGACY_SCALAR_FLOOR_SCHEMA,
+        "main",
+        ("C01",),
+        "f" * 64,
+        legacy_scalar_config_sha256(),
+        floors,
+        1,
+        1,
+        3,
+        (3,) * BAND_COUNT,
+        (0,) * BAND_COUNT,
+        (0,) * BAND_COUNT,
+    )
     return LegacyWholeCaptureRetrievalSystem(
-        copy.deepcopy(base), encoder, score_mode=mode, edge_chunk_size=64
+        copy.deepcopy(base), encoder, score_mode=mode,
+        floor_receipt=receipt, edge_chunk_size=64,
     )
 
 
@@ -93,3 +115,7 @@ def test_legacy_parent_score_is_not_yet_a_registered_training_host(tmp_path, mod
     system.legacy_encoder.encoder._energy_floors = np.full((6,), 0.1, dtype=np.float64)
     with pytest.raises(ValueError, match="changed after construction"):
         system.score((source.views[task.parents[0].source_sha256].capture,), None)
+    system.legacy_encoder.encoder._energy_floors = system.floor_receipt.floors.copy()
+    system._bound_old_scalar_floors[0] = 0.1
+    with pytest.raises(ValueError, match="differs from receipt"):
+        system.set_extra_state(saved)

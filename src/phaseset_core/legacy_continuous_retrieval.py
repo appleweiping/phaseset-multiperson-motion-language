@@ -21,6 +21,7 @@ from .continuous_capture import PreparedContinuousCapture
 from .controls import PhaseSetSystem
 from .frozen_clip_text import FrozenClipTextBatch
 from .legacy_capture import encode_legacy_capture_tokens
+from .legacy_scalar_calibration import LegacyScalarFloorReceipt
 from .objectives import PhaseSetRetrievalHead
 from .periodic import DEFAULT_EDGE_CHUNK_SIZE, validate_edge_chunk_size
 from .pipeline import collate_group_samples, edge_budget_batches
@@ -52,6 +53,7 @@ class LegacyWholeCaptureRetrievalSystem(nn.Module):
         legacy_encoder: PhaseSetSystem,
         *,
         score_mode: str,
+        floor_receipt: LegacyScalarFloorReceipt,
         edge_chunk_size: int = DEFAULT_EDGE_CHUNK_SIZE,
         checkpoint_windows: bool = True,
         base_window_batch_size: int = 1,
@@ -73,6 +75,8 @@ class LegacyWholeCaptureRetrievalSystem(nn.Module):
             raise ValueError("old whole-capture controls require exact system 08 at 512D")
         if score_mode not in ("old", "A9"):
             raise ValueError("score_mode must be old or A9")
+        if type(floor_receipt) is not LegacyScalarFloorReceipt:
+            raise TypeError("old/A9 complete-parent scorer requires a typed training-only floor receipt")
         if type(checkpoint_windows) is not bool:
             raise TypeError("checkpoint_windows must be an exact bool")
         if type(base_window_batch_size) is not int or base_window_batch_size < 1:
@@ -84,26 +88,54 @@ class LegacyWholeCaptureRetrievalSystem(nn.Module):
         self.base_window_batch_size = base_window_batch_size
         self.base_edge_budget = base_edge_budget
         self.score_mode = score_mode
+        self.floor_receipt = floor_receipt
         self.frozen_b2 = frozen_b2.requires_grad_(False).eval()
         self.legacy_encoder = legacy_encoder
+        self.register_buffer(
+            "_bound_old_scalar_floors",
+            torch.from_numpy(floor_receipt.floors.copy()),
+            persistent=True,
+        )
         self.head = (
             PhaseSetRetrievalHead(512)
             if score_mode == "old"
             else LegacyPhaseSetCalibratedHead(512)
         )
         self._floor_sha256 = self._current_floor_sha256()
+        self._verify_floor_binding()
 
     def _current_floor_sha256(self) -> str:
         floors = self.legacy_encoder.encoder._energy_floors
-        if type(floors) is not np.ndarray or floors.dtype != np.float64 or floors.shape != (6,):
+        if (
+            type(floors) is not np.ndarray
+            or floors.dtype != np.float64
+            or floors.shape != (6,)
+            or not floors.flags.c_contiguous
+        ):
             raise ValueError("old scalar floor vector changed shape or type")
         return hashlib.sha256(floors.tobytes(order="C")).hexdigest()
+
+    def _verify_floor_binding(self) -> None:
+        floors = self.legacy_encoder.encoder._energy_floors
+        bound = self._bound_old_scalar_floors.detach().cpu()
+        if (
+            self._current_floor_sha256() != self._floor_sha256
+            or bound.dtype != torch.float64
+            or bound.shape != (6,)
+            or not bound.isfinite().all()
+            or floors.tobytes(order="C") != self.floor_receipt.floors.tobytes(order="C")
+            or bound.numpy().tobytes(order="C") != self.floor_receipt.floors.tobytes(order="C")
+        ):
+            raise ValueError("old scalar floor vector changed after construction or differs from receipt")
 
     def get_extra_state(self) -> Tensor:
         payload = {
             "schema": "phaseset-v2-legacy-whole-capture-v1",
             "score_mode": self.score_mode,
             "old_scalar_floor_sha256": self._floor_sha256,
+            "old_scalar_floor_receipt_sha256": self.floor_receipt.sha256,
+            "training_source_manifest_sha256": self.floor_receipt.training_source_manifest_sha256,
+            "old_scalar_config_sha256": self.floor_receipt.config_sha256,
             "edge_chunk_size": self.edge_chunk_size,
             "checkpoint_windows": self.checkpoint_windows,
             "base_window_batch_size": self.base_window_batch_size,
@@ -118,9 +150,9 @@ class LegacyWholeCaptureRetrievalSystem(nn.Module):
             or state.dtype != torch.uint8
             or state.ndim != 1
             or not torch.equal(state.detach().cpu(), self.get_extra_state())
-            or self._current_floor_sha256() != self._floor_sha256
         ):
             raise ValueError("old mode, scalar floor or capture readout changed on resume")
+        self._verify_floor_binding()
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -154,8 +186,7 @@ class LegacyWholeCaptureRetrievalSystem(nn.Module):
             or any(type(capture) is not PreparedContinuousCapture for capture in captures)
         ):
             raise ValueError("old scorer requires complete prepared capture rows")
-        if self._current_floor_sha256() != self._floor_sha256:
-            raise ValueError("old scalar floor vector changed after construction")
+        self._verify_floor_binding()
         text, _, receipt_sha = _validate_text_batch(text_batch, allow_row_selection=True)
         device = next(self.legacy_encoder.parameters()).device
         if next(self.frozen_b2.parameters()).device != device:

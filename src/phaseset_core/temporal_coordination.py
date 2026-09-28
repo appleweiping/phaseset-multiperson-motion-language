@@ -22,7 +22,19 @@ from .directional_phase import (
     DirectionalPhaseField,
     local_pair_chunk,
 )
+from .dct_relations import DctRelationField, local_dct_pair_chunk
 from .objectives import variable_positive_symmetric_infonce
+
+
+RelationField = DirectionalPhaseField | DctRelationField
+
+
+def _relation_pair_chunk(field: RelationField, start: int, stop: int):
+    if type(field) is DctRelationField:
+        return local_dct_pair_chunk(field, start, stop)
+    if type(field) is DirectionalPhaseField:
+        return local_pair_chunk(field, start, stop)
+    raise TypeError("relation field must be a physical phase or A6 DCT field")
 
 
 class MaskedTemporalEncoder(nn.Module):
@@ -124,9 +136,9 @@ class TemporalIncidenceEncoder(nn.Module):
         self.topology_scale = nn.Parameter(torch.tensor(0.1))
 
     def _half_edges(
-        self, field: DirectionalPhaseField, hidden: Tensor, start: int, stop: int
+        self, field: RelationField, hidden: Tensor, start: int, stop: int
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
-        chunk = local_pair_chunk(field, start, stop)
+        chunk = _relation_pair_chunk(field, start, stop)
         device = hidden.device
         endpoints = torch.tensor(chunk.endpoints.copy(), dtype=torch.int64, device=device)
         forward = torch.tensor(chunk.features.copy(), dtype=hidden.dtype, device=device)
@@ -177,7 +189,7 @@ class TemporalIncidenceEncoder(nn.Module):
         )
 
     def _node_block(
-        self, field: DirectionalPhaseField, hidden: Tensor, start: int, stop: int
+        self, field: RelationField, hidden: Tensor, start: int, stop: int
     ) -> tuple[Tensor, Tensor, Tensor]:
         a, b, endpoints, mask = self._half_edges(field, hidden, start, stop)
         # K x 64 incidence block, not an all-pair K x K adjacency or score map.
@@ -192,7 +204,7 @@ class TemporalIncidenceEncoder(nn.Module):
 
     def _edge_block(
         self,
-        field: DirectionalPhaseField,
+        field: RelationField,
         hidden: Tensor,
         nodes: Tensor,
         topology_mask: Tensor,
@@ -218,7 +230,7 @@ class TemporalIncidenceEncoder(nn.Module):
             return checkpoint(function, *inputs, use_reentrant=False)
         return function(*inputs)
 
-    def _encode_context(self, field: DirectionalPhaseField) -> tuple[Tensor, Tensor, Tensor]:
+    def _encode_context(self, field: RelationField) -> tuple[Tensor, Tensor, Tensor]:
         device = next(self.parameters()).device
         actor_values = torch.tensor(field.actor_features.copy(), dtype=torch.float32, device=device)
         actor_mask = torch.tensor(field.actor_patch_mask.copy(), device=device)
@@ -267,7 +279,7 @@ class TemporalIncidenceEncoder(nn.Module):
         return hidden, nodes, topology_mask
 
     def _readout(
-        self, field: DirectionalPhaseField, hidden: Tensor, nodes: Tensor, topology_mask: Tensor
+        self, field: RelationField, hidden: Tensor, nodes: Tensor, topology_mask: Tensor
     ) -> TemporalCoordinationOutput:
         device = hidden.device
         patch_sum = torch.zeros((field.patch_count, self.width), dtype=torch.float64, device=device)
@@ -294,12 +306,12 @@ class TemporalIncidenceEncoder(nn.Module):
             pair_count,
         )
 
-    def forward(self, field: DirectionalPhaseField) -> TemporalCoordinationOutput:
+    def forward(self, field: RelationField) -> TemporalCoordinationOutput:
         return self._readout(field, *self._encode_context(field))
 
     def _directed_text_block(
         self,
-        field: DirectionalPhaseField,
+        field: RelationField,
         hidden: Tensor,
         nodes: Tensor,
         topology_mask: Tensor,
@@ -322,8 +334,9 @@ class TemporalIncidenceEncoder(nn.Module):
         )
         histories, _ = self.edge_temporal(packets, torch.cat((track_support, track_support)))
         # Zero-energy observations can carry track context but are not reliable
-        # periodic evidence. Coherence is a feature, never a threshold filter.
-        physical = local_pair_chunk(field, start, stop)
+        # physical evidence. Phase uses Morlet floors; A6 uses its independently
+        # fitted DCT floors. Neither treats mere track coverage as evidence.
+        physical = _relation_pair_chunk(field, start, stop)
         observable = torch.tensor(physical.phase_mask.any(axis=-1).copy(), device=hidden.device)
         observable = observable & track_support
         language_mask = torch.cat((observable, observable))
@@ -332,7 +345,7 @@ class TemporalIncidenceEncoder(nn.Module):
         return best, language_mask.any()
 
     def score_text(
-        self, field: DirectionalPhaseField, text_embeddings: Tensor
+        self, field: RelationField, text_embeddings: Tensor
     ) -> TemporalRelationScores:
         """Stream whole directed packets against whole captions on the full timeline.
 

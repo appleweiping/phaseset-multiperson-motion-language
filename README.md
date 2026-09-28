@@ -69,7 +69,15 @@ verified counterfactual coordination supervision. The
 [87-stage matrix](configs/phaseset_v2_experiment_matrix.json) supersedes the
 affected legacy 33-run plan. New modules are independent research APIs; the
 production V2 training-host integration and converged literature reproductions
-are not yet qualified. [TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
+are not yet qualified.
+The V2 A6 comparator now has a data-free, whole-capture relation seam that
+forms actual `(a+b)/2` and `a-b` velocity signals *before* six-band DCT,
+retaining their cross term. This is distinct from legacy system 03's separate
+endpoint self-power control and is not an InterEdit reproduction. A6 requires
+its own typed, training-population DCT-floor receipt, which is a declaration
+until the private host authenticates the real fit and manifest. Neither this
+seam nor its server CPU tests constitute an A6 training run.
+[TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
 complete original VAE objectives with disclosed full-parent group adaptation;
 its pinned frozen language loader is not a substitute for native learning.
 [WaMo-Set](docs/WAMO_SET_ADAPTATION.md) implements learnable stationary analysis

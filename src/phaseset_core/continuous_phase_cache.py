@@ -8,14 +8,14 @@ a completed training host or a constant-resident-memory guarantee.
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 import shutil
 
 import numpy as np
 
-from .continuous_capture import PreparedContinuousCapture
+from .continuous_capture import PreparedContinuousCapture, physical_view_sha256
 from .directional_phase import (
     ACTOR_FEATURE_DIM,
     DirectionalPhaseField,
@@ -104,7 +104,12 @@ def write_continuous_phase_cache(
     with (destination / "metadata.json").open("x", encoding="utf-8") as stream:
         json.dump(metadata, stream, sort_keys=True)
         stream.write("\n")
-    return field
+    return replace(
+        field,
+        source_sha256=capture.source_sha256,
+        actor_commitments=capture.actor_commitments,
+        physical_view_sha256=physical_view_sha256(capture),
+    )
 
 
 def load_continuous_phase_cache(
@@ -159,4 +164,5 @@ def load_continuous_phase_cache(
         mapped("root-patch-mask", np.bool_, (actors, patches)),
         validate_energy_floors(energy_floors),
         config,
+        source_sha256=metadata["source_sha256"],
     )

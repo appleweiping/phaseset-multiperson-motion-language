@@ -16,6 +16,8 @@ from torch.nn import functional as F
 
 from .capture_validation import _validate_text_batch
 from .continuous_training_input import ContinuousTrainingView
+from .dct_calibration import DctFloorReceipt
+from .dct_relations import DctRelationField
 from .frozen_clip_text import FrozenClipTextBatch
 from .pipeline import collate_group_samples, edge_budget_batches
 from .temporal_coordination import (
@@ -108,6 +110,8 @@ class ContinuousRetrievalSystem(nn.Module):
         *,
         use_topology: bool = True,
         strip_phase: bool = False,
+        relation_kind: str = "phase",
+        dct_floor_receipt: DctFloorReceipt | None = None,
         checkpoint_blocks: bool = True,
         base_window_batch_size: int = 1,
         base_edge_budget: int = 32768,
@@ -123,6 +127,25 @@ class ContinuousRetrievalSystem(nn.Module):
             raise ValueError("base_window_batch_size must be a positive integer")
         if type(base_edge_budget) is not int or base_edge_budget < 1:
             raise ValueError("base_edge_budget must be a positive integer")
+        if relation_kind not in ("phase", "true_mean_difference_dct"):
+            raise ValueError("relation_kind must be phase or true_mean_difference_dct")
+        if relation_kind == "phase":
+            if dct_floor_receipt is not None:
+                raise ValueError("DCT receipt must not enter the phase system")
+            self.register_buffer("dct_energy_floors", None)
+            self._dct_floor_receipt = None
+            self._dct_receipt_sha256 = None
+        else:
+            if strip_phase or type(dct_floor_receipt) is not DctFloorReceipt:
+                raise ValueError("A6 requires a typed independent DCT floor receipt")
+            # Persistent state binds the physical calibration to every model
+            # checkpoint; a changed external array cannot alter later scoring.
+            self.register_buffer(
+                "dct_energy_floors", torch.from_numpy(dct_floor_receipt.floors.copy())
+            )
+            self._dct_floor_receipt = dct_floor_receipt
+            self._dct_receipt_sha256 = dct_floor_receipt.sha256
+        self.relation_kind = relation_kind
         self.frozen_b2 = frozen_b2.requires_grad_(False).eval()
         self.coordination = TemporalIncidenceEncoder(
             width=512,
@@ -134,6 +157,31 @@ class ContinuousRetrievalSystem(nn.Module):
         self.calibration = CalibratedCoordinationScore()
         self.base_window_batch_size = base_window_batch_size
         self.base_edge_budget = base_edge_budget
+
+    def get_extra_state(self) -> dict[str, str | None]:
+        """Bind A6 receipt identity to exact checkpoint resume, not only floor values."""
+        return {
+            "schema": "phaseset-v2-relation-state-v1",
+            "relation_kind": self.relation_kind,
+            "dct_floor_receipt_sha256": self._dct_receipt_sha256,
+        }
+
+    def set_extra_state(self, state: object) -> None:
+        if type(state) is not dict or state != self.get_extra_state():
+            raise ValueError("relation kind or DCT floor receipt changed across checkpoint resume")
+        self._check_dct_floor_binding()
+
+    def _check_dct_floor_binding(self) -> None:
+        if self.relation_kind == "phase":
+            return
+        if (
+            self._dct_floor_receipt.sha256 != self._dct_receipt_sha256
+            or not torch.equal(
+                self.dct_energy_floors.detach().cpu(),
+                torch.from_numpy(self._dct_floor_receipt.floors.copy()),
+            )
+        ):
+            raise ValueError("DCT calibration buffer or receipt changed after construction")
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -177,6 +225,7 @@ class ContinuousRetrievalSystem(nn.Module):
         ):
             raise ValueError("views must be a nonempty tuple of admitted continuous inputs")
         text, _, receipt_sha = _validate_text_batch(text_batch, allow_row_selection=True)
+        self._check_dct_floor_binding()
         device = next(self.coordination.parameters()).device
         keys = tuple(view.positive_capture_key for view in views)
         text = text.to(device)
@@ -188,7 +237,16 @@ class ContinuousRetrievalSystem(nn.Module):
             ):
                 raise ValueError("the coordination field must span the complete capture")
             base_rows.append(self.encode_global(view))
-            output = self.coordination.score_text(view.phase_field, adapted_text)
+            physical = (
+                view.phase_field
+                if self.relation_kind == "phase"
+                else DctRelationField.from_capture(
+                    view.capture,
+                    view.phase_field,
+                    dct_floor_receipt=self._dct_floor_receipt,
+                )
+            )
+            output = self.coordination.score_text(physical, adapted_text)
             relation_rows.append(output.cosine)
             supports.append(output.periodic_support)
         global_cosine = F.normalize(torch.stack(base_rows), dim=-1) @ F.normalize(text, dim=-1).T

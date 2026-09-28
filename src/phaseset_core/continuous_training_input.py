@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-from .continuous_capture import PreparedContinuousCapture
+from .continuous_capture import PreparedContinuousCapture, physical_view_sha256
 from .continuous_capture_io import _file_sha256, load_prepared_continuous_capture
 from .continuous_phase_cache import load_continuous_phase_cache
 from .directional_phase import (
@@ -131,7 +131,14 @@ class ContinuousTrainingInput:
         )
         if field.actor_count != capture.actor_count or field.patch_count != cache_record["patches"]:
             raise ValueError("physical cache actor/patch census differs")
-        return cls(capture, field)
+        return cls(
+            capture,
+            replace(
+                field,
+                actor_commitments=capture.actor_commitments,
+                physical_view_sha256=physical_view_sha256(capture),
+            ),
+        )
 
     def view(
         self,

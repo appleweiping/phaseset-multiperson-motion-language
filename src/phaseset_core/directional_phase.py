@@ -8,7 +8,7 @@ Physical features are fixed preprocessing, independent of text or actor IDs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 from typing import Iterator
@@ -16,7 +16,7 @@ from typing import Iterator
 import numpy as np
 
 from .contracts import PreparedGroupBatch, validate_prepared_group_batch
-from .continuous_capture import PreparedContinuousCapture
+from .continuous_capture import PreparedContinuousCapture, physical_view_sha256
 from .morlet import MORLET_FREQUENCIES_HZ, SAMPLE_RATE_HZ, morlet_kernel_bank
 from .periodic import ResourceLimitError, validate_energy_floors
 
@@ -62,6 +62,9 @@ class DirectionalPhaseField:
     root_patch_mask: np.ndarray  # [K,P]
     energy_floors: np.ndarray
     config: LocalPhaseConfig
+    source_sha256: str | None = None
+    actor_commitments: tuple[bytes, ...] | None = None
+    physical_view_sha256: str | None = None
 
     @property
     def actor_count(self) -> int:
@@ -177,7 +180,7 @@ def continuous_directional_phase_field(
     if type(capture) is not PreparedContinuousCapture:
         raise TypeError("capture must be exactly PreparedContinuousCapture")
     floors = validate_energy_floors(energy_floors)
-    return _directional_fields_from_arrays(
+    field = _directional_fields_from_arrays(
         capture.skeletons[None],
         capture.track_mask[None],
         np.ones((1, capture.frame_count), dtype=np.bool_),
@@ -187,6 +190,12 @@ def continuous_directional_phase_field(
         floors,
         config,
     )[0]
+    return replace(
+        field,
+        source_sha256=capture.source_sha256,
+        actor_commitments=capture.actor_commitments,
+        physical_view_sha256=physical_view_sha256(capture),
+    )
 
 
 def _directional_fields_from_arrays(

@@ -9,7 +9,9 @@ timeline as exact +0 with false masks; they are never concatenated away.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import math
+import struct
 
 import numpy as np
 
@@ -134,6 +136,28 @@ class PreparedContinuousCapture:
             for index, decision in enumerate(self.decisions)
             if decision.accepted
         )
+
+
+def physical_view_sha256(capture: PreparedContinuousCapture) -> str:
+    """Commit to the exact prepared/augmented physical view, not only source ID.
+
+    This binds actor order, every body22 coordinate/mask byte, the common
+    transform and source identity. It distinguishes different yaw/materialized
+    arrays of the same released capture without exposing participant IDs.
+    """
+    if type(capture) is not PreparedContinuousCapture:
+        raise TypeError("physical view digest requires PreparedContinuousCapture")
+    digest = hashlib.sha256(b"phaseset-physical-view-v1\x00")
+    digest.update(bytes.fromhex(capture.source_sha256))
+    digest.update(struct.pack("<4Q", *capture.skeletons.shape))
+    digest.update(struct.pack("<q", capture.reference_frame))
+    digest.update(struct.pack("<d", float(capture.augmentation_yaw)))
+    digest.update(capture.group_center.astype("<f8", copy=False).tobytes())
+    for commitment in capture.actor_commitments:
+        digest.update(commitment)
+    digest.update(memoryview(capture.skeletons).cast("B"))
+    digest.update(memoryview(capture.track_mask).cast("B"))
+    return digest.hexdigest()
 
 
 def _capture_filter(values: np.ndarray, kernel: np.ndarray, chunk_frames: int) -> np.ndarray:

@@ -139,6 +139,44 @@ class MaskedTemporalEncoder(nn.Module):
         return torch.stack(outputs, dim=1), torch.stack(layer_states)
 
 
+class OrderFreeTemporalEncoder(nn.Module):
+    """A2: equal-capacity independent patch MLP followed by masked mean.
+
+    No state, position embedding, convolution or ordered reduction is used.
+    The 6x expansion matches two width-preserving GRUCells within 0.1% in
+    trainable parameters, without inert capacity-padding tensors.
+    """
+
+    def __init__(self, width: int) -> None:
+        super().__init__()
+        if type(width) is not int or width < 2:
+            raise ValueError("width must be an integer >=2")
+        self.width = width
+        self.pointwise = nn.Sequential(
+            nn.Linear(width, 6 * width),
+            nn.GELU(),
+            nn.Linear(6 * width, width),
+        )
+
+    def forward(self, sequence: Tensor, mask: Tensor) -> tuple[Tensor, Tensor]:
+        if (
+            sequence.ndim != 3
+            or sequence.shape[2] != self.width
+            or mask.shape != sequence.shape[:2]
+            or mask.dtype != torch.bool
+            or sequence.shape[1] == 0
+        ):
+            raise ValueError("A2 requires nonempty [N,P,width] and bool[N,P]")
+        outputs = self.pointwise(sequence)
+        outputs = torch.where(mask[..., None], outputs, torch.zeros_like(outputs))
+        count = mask.sum(dim=1).clamp_min(1)
+        embedding = (
+            outputs.to(torch.float64).sum(dim=1) / count[:, None].to(torch.float64)
+        ).to(outputs.dtype)
+        embedding = torch.where(mask.any(dim=1)[:, None], embedding, torch.zeros_like(embedding))
+        return outputs, embedding
+
+
 @dataclass(frozen=True)
 class TemporalCoordinationOutput:
     patch_tokens: Tensor
@@ -166,6 +204,7 @@ class TemporalIncidenceEncoder(nn.Module):
         use_topology: bool = True,
         strip_phase: bool = False,
         incidence_shuffle_seed: int | None = None,
+        order_free: bool = False,
         checkpoint_blocks: bool = True,
     ) -> None:
         super().__init__()
@@ -177,13 +216,19 @@ class TemporalIncidenceEncoder(nn.Module):
             or not use_topology
         ):
             raise ValueError("A4 needs a fixed seed and active incidence topology")
+        if type(order_free) is not bool or (
+            order_free and (not use_topology or strip_phase or incidence_shuffle_seed is not None)
+        ):
+            raise ValueError("A2 must remove order from the otherwise full phase system")
         self.width = width
         self.use_topology = use_topology
         self.strip_phase = strip_phase
         self.incidence_shuffle_seed = incidence_shuffle_seed
+        self.order_free = order_free
         self.checkpoint_blocks = checkpoint_blocks
+        temporal_encoder = OrderFreeTemporalEncoder if order_free else MaskedTemporalEncoder
         self.actor_projection = nn.Sequential(nn.Linear(ACTOR_FEATURE_DIM, width), nn.GELU())
-        self.actor_temporal = MaskedTemporalEncoder(width)
+        self.actor_temporal = temporal_encoder(width)
         self.half_edge = nn.Sequential(
             nn.Linear(2 * width + 6 * PHASE_FEATURE_DIM + 3, width),
             nn.GELU(),
@@ -193,12 +238,12 @@ class TemporalIncidenceEncoder(nn.Module):
         self.node_mlp = nn.Sequential(
             nn.Linear(3 * width + 2, width), nn.GELU(), nn.Linear(width, width)
         )
-        self.node_temporal = MaskedTemporalEncoder(width)
+        self.node_temporal = temporal_encoder(width)
         self.edge_delta = nn.Sequential(
             nn.Linear(3 * width, width), nn.GELU(), nn.Linear(width, width)
         )
-        self.edge_temporal = MaskedTemporalEncoder(width)
-        self.group_temporal = MaskedTemporalEncoder(width)
+        self.edge_temporal = temporal_encoder(width)
+        self.group_temporal = temporal_encoder(width)
         self.topology_scale = nn.Parameter(torch.tensor(0.1))
 
     def _half_edges(

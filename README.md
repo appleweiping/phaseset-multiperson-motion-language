@@ -84,6 +84,10 @@ physical pair packets, edge support and model capacity while deterministically
 reassigning supported half-edge values at the actor-incidence node input. Its
 shuffle is independent of private participant commitments. Software review
 and tests do not count as formal A4 training or retrieval results.
+The [A2 order-free control](docs/PHASESET_V2_A2_ORDER_FREE.md) replaces all
+four learned temporal GRU paths with near-equal-capacity independent patch
+MLPs and masked means while retaining the same physical phase input. It tests
+the contribution of learned order, not the existence of physical phase.
 [TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
 complete original VAE objectives with disclosed full-parent group adaptation;
 its pinned frozen language loader is not a substitute for native learning.

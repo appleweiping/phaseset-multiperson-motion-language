@@ -1,6 +1,7 @@
 """A6 data-free relation-field and model-seam checks, not trained retrieval."""
 
 from dataclasses import replace
+import json
 
 import numpy as np
 import pytest
@@ -193,7 +194,22 @@ def test_a6_retrieval_seam_requires_independent_floors_and_keeps_head_capacity()
         dct.state_dict()["dct_energy_floors"], torch.full((6,), 1e-3, dtype=torch.float64)
     )
     assert "dct_energy_floors" not in phase.state_dict()
-    assert dct.state_dict()["_extra_state"]["dct_floor_receipt_sha256"] == receipt.sha256
+    state_bytes = bytes(dct.state_dict()["_extra_state"].tolist())
+    assert json.loads(state_bytes)["dct_floor_receipt_sha256"] == receipt.sha256
+    assert all(type(value) is torch.Tensor for value in phase.state_dict().values())
+    assert all(type(value) is torch.Tensor for value in dct.state_dict().values())
+    ContinuousRetrievalSystem(base).load_state_dict(phase.state_dict())
+    ContinuousRetrievalSystem(
+        base, relation_kind="true_mean_difference_dct", dct_floor_receipt=receipt
+    ).load_state_dict(dct.state_dict())
+    with pytest.raises(ValueError, match="checkpoint resume"):
+        dct.set_extra_state(dct.get_extra_state().to(torch.int64))
+    mutated_state = dct.get_extra_state().clone()
+    mutated_state[0] ^= 1
+    with pytest.raises(ValueError, match="checkpoint resume"):
+        dct.set_extra_state(mutated_state)
+    with pytest.raises(ValueError, match="checkpoint resume"):
+        phase.set_extra_state(dct.get_extra_state())
     changed = ContinuousRetrievalSystem(
         base,
         relation_kind="true_mean_difference_dct",

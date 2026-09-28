@@ -9,6 +9,7 @@ as human evidence. No final-test or data discovery happens inside this module.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 
 import torch
 from torch import Tensor, nn
@@ -158,16 +159,23 @@ class ContinuousRetrievalSystem(nn.Module):
         self.base_window_batch_size = base_window_batch_size
         self.base_edge_budget = base_edge_budget
 
-    def get_extra_state(self) -> dict[str, str | None]:
-        """Bind A6 receipt identity to exact checkpoint resume, not only floor values."""
-        return {
+    def get_extra_state(self) -> Tensor:
+        """Tensor-encode the relation identity for tensor-only checkpoint hosts."""
+        payload = {
             "schema": "phaseset-v2-relation-state-v1",
             "relation_kind": self.relation_kind,
             "dct_floor_receipt_sha256": self._dct_receipt_sha256,
         }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return torch.tensor(list(encoded), dtype=torch.uint8)
 
     def set_extra_state(self, state: object) -> None:
-        if type(state) is not dict or state != self.get_extra_state():
+        if (
+            type(state) is not Tensor
+            or state.dtype != torch.uint8
+            or state.ndim != 1
+            or not torch.equal(state.detach().cpu(), self.get_extra_state())
+        ):
             raise ValueError("relation kind or DCT floor receipt changed across checkpoint resume")
         self._check_dct_floor_binding()
 

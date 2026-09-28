@@ -114,6 +114,7 @@ class ContinuousRetrievalSystem(nn.Module):
         strip_phase: bool = False,
         relation_kind: str = "phase",
         dct_floor_receipt: DctFloorReceipt | None = None,
+        incidence_shuffle_seed: int | None = None,
         checkpoint_blocks: bool = True,
         base_window_batch_size: int = 1,
         base_edge_budget: int = 32768,
@@ -131,6 +132,8 @@ class ContinuousRetrievalSystem(nn.Module):
             raise ValueError("base_edge_budget must be a positive integer")
         if relation_kind not in ("phase", "true_mean_difference_dct"):
             raise ValueError("relation_kind must be phase or true_mean_difference_dct")
+        if relation_kind != "phase" and incidence_shuffle_seed is not None:
+            raise ValueError("A4 incidence shuffle is a separate phase control, not A6")
         if relation_kind == "phase":
             if dct_floor_receipt is not None:
                 raise ValueError("DCT receipt must not enter the phase system")
@@ -153,6 +156,7 @@ class ContinuousRetrievalSystem(nn.Module):
             width=512,
             use_topology=use_topology,
             strip_phase=strip_phase,
+            incidence_shuffle_seed=incidence_shuffle_seed,
             checkpoint_blocks=checkpoint_blocks,
         )
         self.text_adapter = nn.Sequential(nn.Linear(512, 512), nn.GELU(), nn.Linear(512, 512))
@@ -167,6 +171,8 @@ class ContinuousRetrievalSystem(nn.Module):
             "relation_kind": self.relation_kind,
             "dct_floor_receipt_sha256": self._dct_receipt_sha256,
         }
+        if self.coordination.incidence_shuffle_seed is not None:
+            payload["incidence_shuffle_seed"] = self.coordination.incidence_shuffle_seed
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return torch.tensor(list(encoded), dtype=torch.uint8)
 

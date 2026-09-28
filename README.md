@@ -79,6 +79,11 @@ floor populations and the [native source-binding qualification](docs/PHASESET_V2
 have private server receipts; future run-bound GPU, cost, and checkpoint
 admission remains separate. Neither the source check nor its CPU tests
 constitute an A6 training run.
+The [A4 incidence-shuffle control](docs/PHASESET_V2_A4_INCIDENCE.md) preserves
+physical pair packets, edge support and model capacity while deterministically
+reassigning supported half-edge values at the actor-incidence node input. Its
+shuffle is independent of private participant commitments. Software review
+and tests do not count as formal A4 training or retrieval results.
 [TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
 complete original VAE objectives with disclosed full-parent group adaptation;
 its pinned frozen language loader is not a substitute for native learning.

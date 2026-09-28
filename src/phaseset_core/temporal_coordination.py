@@ -9,6 +9,7 @@ all edge-token activations. All-pair time remains quadratic in actor count.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import math
 
 import torch
@@ -35,6 +36,63 @@ def _relation_pair_chunk(field: RelationField, start: int, stop: int):
     if type(field) is DirectionalPhaseField:
         return local_pair_chunk(field, start, stop)
     raise TypeError("relation field must be a physical phase or A6 DCT field")
+
+
+def _shuffle_incidence_values(
+    a: Tensor,
+    b: Tensor,
+    mask: Tensor,
+    *,
+    seed: int,
+    block_start: int,
+) -> tuple[Tensor, Tensor]:
+    """A4: shuffle supported half-edge values, never their endpoint slots.
+
+    The operation is per capture, patch and canonical edge microblock. It
+    preserves every patch's half-edge multiset, edge support, degree and
+    coverage; only the values entering the actor-incidence node statistics are
+    reassigned. Pair tokens and their temporal/text path remain untouched.
+    """
+    if (
+        a.shape != b.shape
+        or a.ndim != 3
+        or mask.shape != a.shape[:2]
+        or mask.dtype != torch.bool
+        or type(seed) is not int
+        or not 0 <= seed < 2**63
+        or type(block_start) is not int
+        or block_start < 0
+    ):
+        raise ValueError("A4 requires valid support and a fixed seed")
+    edges, patches, width = a.shape
+    values = torch.stack((a, b), dim=1).permute(2, 0, 1, 3).reshape(patches, 2 * edges, width)
+    valid = mask.detach().cpu().T.repeat_interleave(2, dim=1).tolist()
+    rows: list[list[int]] = []
+    for patch, observed in enumerate(valid):
+        mapping = list(range(2 * edges))
+        slots = [index for index, present in enumerate(observed) if present]
+        length = len(slots)
+        if length > 1:
+            digest = hashlib.sha256(
+                b"phaseset-v2-A4-incidence-v1\0"
+                + seed.to_bytes(8, "big")
+                + block_start.to_bytes(8, "big")
+                + patch.to_bytes(8, "big")
+                + length.to_bytes(8, "big")
+            ).digest()
+            offset = int.from_bytes(digest[:8], "big") % length
+            step = int.from_bytes(digest[8:16], "big") % length or 1
+            while math.gcd(step, length) != 1:
+                step = (step + 1) % length or 1
+            if step == 1 and offset == 0:
+                offset = 1
+            for position, slot in enumerate(slots):
+                mapping[slot] = slots[(position * step + offset) % length]
+        rows.append(mapping)
+    indices = torch.tensor(rows, dtype=torch.int64, device=a.device)
+    shuffled = values.gather(1, indices[..., None].expand(-1, -1, width))
+    paired = shuffled.reshape(patches, edges, 2, width).permute(1, 2, 0, 3)
+    return paired[:, 0].contiguous(), paired[:, 1].contiguous()
 
 
 class MaskedTemporalEncoder(nn.Module):
@@ -107,14 +165,22 @@ class TemporalIncidenceEncoder(nn.Module):
         *,
         use_topology: bool = True,
         strip_phase: bool = False,
+        incidence_shuffle_seed: int | None = None,
         checkpoint_blocks: bool = True,
     ) -> None:
         super().__init__()
         if type(width) is not int or width < 2:
             raise ValueError("width must be an integer >=2")
+        if incidence_shuffle_seed is not None and (
+            type(incidence_shuffle_seed) is not int
+            or not 0 <= incidence_shuffle_seed < 2**63
+            or not use_topology
+        ):
+            raise ValueError("A4 needs a fixed seed and active incidence topology")
         self.width = width
         self.use_topology = use_topology
         self.strip_phase = strip_phase
+        self.incidence_shuffle_seed = incidence_shuffle_seed
         self.checkpoint_blocks = checkpoint_blocks
         self.actor_projection = nn.Sequential(nn.Linear(ACTOR_FEATURE_DIM, width), nn.GELU())
         self.actor_temporal = MaskedTemporalEncoder(width)
@@ -192,6 +258,16 @@ class TemporalIncidenceEncoder(nn.Module):
         self, field: RelationField, hidden: Tensor, start: int, stop: int
     ) -> tuple[Tensor, Tensor, Tensor]:
         a, b, endpoints, mask = self._half_edges(field, hidden, start, stop)
+        if self.incidence_shuffle_seed is not None:
+            if type(field) is not DirectionalPhaseField:
+                raise TypeError("A4 requires a physical phase field")
+            a, b = _shuffle_incidence_values(
+                a,
+                b,
+                mask,
+                seed=self.incidence_shuffle_seed,
+                block_start=start,
+            )
         # K x 64 incidence block, not an all-pair K x K adjacency or score map.
         left = F.one_hot(endpoints[:, 0], field.actor_count).T.to(torch.float64)
         right = F.one_hot(endpoints[:, 1], field.actor_count).T.to(torch.float64)

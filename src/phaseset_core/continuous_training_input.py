@@ -20,6 +20,7 @@ import numpy as np
 from .continuous_capture import PreparedContinuousCapture, physical_view_sha256
 from .continuous_capture_io import _file_sha256, load_prepared_continuous_capture
 from .continuous_phase_cache import load_continuous_phase_cache
+from .dct_relations import DctViewContext
 from .directional_phase import (
     DirectionalPhaseField,
     LocalPhaseConfig,
@@ -67,7 +68,7 @@ def shared_yaw_capture(
 @dataclass(frozen=True)
 class ContinuousTrainingView:
     capture: PreparedContinuousCapture
-    phase_field: DirectionalPhaseField
+    phase_field: DirectionalPhaseField | DctViewContext
     reused_physical_cache: bool
 
     @property

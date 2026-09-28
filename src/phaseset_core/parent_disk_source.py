@@ -16,7 +16,14 @@ from typing import Mapping
 import numpy as np
 
 from .continuous_capture_io import load_prepared_continuous_capture
-from .continuous_training_input import ContinuousTrainingInput, shared_yaw_capture
+from .continuous_training_input import (
+    ContinuousTrainingInput,
+    ContinuousTrainingView,
+    shared_yaw_capture,
+)
+from .dct_calibration import DctFloorReceipt
+from .dct_relations import DctViewContext, require_dct_working_budget
+from .directional_phase import LocalPhaseConfig
 from .parent_retrieval_task import ParentCaptionRecord, ParentRetrievalTask
 from .parent_clip_rows import ParentHumanClipRows
 from .parent_weak_clip_rows import ParentWeakClipRows
@@ -73,6 +80,7 @@ class DevelopmentParentDiskSource:
         yaw_eligibility: Mapping[str, bool],
         language_rows: FrozenTMRRowCache,
         energy_floors: np.ndarray | None = None,
+        dct_floor_receipt: DctFloorReceipt | None = None,
         human_clip_rows: ParentHumanClipRows | None = None,
         weak_clip_rows: ParentWeakClipRows | None = None,
     ):
@@ -91,6 +99,13 @@ class DevelopmentParentDiskSource:
             raise ValueError("every human-caption family needs explicit boolean yaw eligibility")
         if type(language_rows) is not FrozenTMRRowCache:
             raise TypeError("need the closed frozen TMR/WaMo human feature rows")
+        if energy_floors is not None and dct_floor_receipt is not None:
+            raise ValueError("phase and A6 floors must not be admitted together")
+        if dct_floor_receipt is not None:
+            if type(dct_floor_receipt) is not DctFloorReceipt:
+                raise TypeError("A6 disk source requires a typed DCT floor receipt")
+            dct_floor_receipt.require_config(LocalPhaseConfig())
+        self.dct_floor_receipt = dct_floor_receipt
         for parent in task.parents:
             record = self.records[parent.annotation_family_sha256]
             if parent.split == "test":
@@ -155,6 +170,23 @@ class DevelopmentParentDiskSource:
         return shared_yaw_capture(capture, yaw_delta=angle)
 
     def view(self, parent, *, seed, epoch, training):
+        if self.dct_floor_receipt is not None:
+            record, _ = self._record_and_yaw(parent, seed=seed, epoch=epoch, training=training)
+            shape = record.prepared_record.get("shape")
+            if (
+                type(shape) is not list
+                or len(shape) != 4
+                or any(type(value) is not int for value in shape)
+                or shape[2:] != [22, 3]
+            ):
+                raise ValueError("A6 prepared shape is invalid")
+            require_dct_working_budget(shape[0], shape[1], LocalPhaseConfig())
+            capture = self.capture(parent, seed=seed, epoch=epoch, training=training)
+            return ContinuousTrainingView(
+                capture,
+                DctViewContext.from_capture(capture, LocalPhaseConfig(), self.dct_floor_receipt),
+                False,
+            )
         if self.energy_floors is None:
             return self.capture(parent, seed=seed, epoch=epoch, training=training)
         record, angle = self._record_and_yaw(parent, seed=seed, epoch=epoch, training=training)

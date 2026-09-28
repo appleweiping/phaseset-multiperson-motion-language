@@ -9,7 +9,7 @@ import torch
 
 from phaseset_core.continuous_retrieval import ContinuousRetrievalSystem
 from phaseset_core.dct_calibration import DCT_FLOOR_SCHEMA, DctFloorReceipt, dct_config_sha256
-from phaseset_core.dct_relations import DctRelationField, local_dct_pair_chunk
+from phaseset_core.dct_relations import DctRelationField, DctViewContext, local_dct_pair_chunk
 from phaseset_core.directional_phase import (
     LocalPhaseConfig,
     continuous_directional_phase_field,
@@ -168,11 +168,100 @@ def test_a6_complete_retrieval_seam_uses_dct_field_and_frozen_text(tmp_path):
         relation_kind="true_mean_difference_dct",
         dct_floor_receipt=receipt,
     )
-    score = model.score((view,), text)
+    model.eval()
+    with pytest.raises(ValueError, match="DCT-only context"):
+        model.score((view,), text)
+    lightweight = replace(
+        view,
+        phase_field=DctViewContext.from_capture(
+            view.capture, view.phase_field.config, receipt
+        ),
+        reused_physical_cache=False,
+    )
+    assert not hasattr(lightweight.phase_field, "responses")
+    score = model.score((lightweight,), text)
     assert score.scores.shape == (1, 2)
     assert bool(torch.isfinite(score.scores).all())
     assert bool(score.periodic_support[0])
     assert score.text_receipt_sha256 == text.receipt.sha256
+    with pytest.raises(ValueError, match="complete Morlet field"):
+        ContinuousRetrievalSystem(
+            BaseRetrievalSystem(_MockB2(), embedding_dim=512)
+        ).score((lightweight,), text)
+
+
+def test_a6_lightweight_context_produces_identical_relation_features(tmp_path):
+    view, full_context, receipt = _dct_view(tmp_path)
+    context = DctViewContext.from_capture(view.capture, view.phase_field.config, receipt)
+    assert context.source_sha256 == view.capture.source_sha256
+    assert context.actor_count == view.capture.actor_count
+    assert not hasattr(context, "responses")
+    lightweight = DctRelationField.from_capture(
+        view.capture, context, dct_floor_receipt=receipt
+    )
+    for name in (
+        "velocities",
+        "velocity_mask",
+        "actor_features",
+        "actor_patch_mask",
+        "root_positions",
+        "root_patch_mask",
+    ):
+        np.testing.assert_array_equal(getattr(lightweight, name), getattr(full_context, name))
+    for name in ("features", "phase_mask", "support_mask"):
+        np.testing.assert_array_equal(
+            getattr(local_dct_pair_chunk(lightweight, 0, lightweight.pair_count), name),
+            getattr(local_dct_pair_chunk(full_context, 0, full_context.pair_count), name),
+        )
+    with pytest.raises(ValueError, match="binding"):
+        DctRelationField.from_capture(
+            view.capture,
+            replace(context, physical_view_sha256="0" * 64),
+            dct_floor_receipt=receipt,
+        )
+
+
+def test_a6_lightweight_context_refuses_full_timeline_resource_overflow(tmp_path):
+    view, _, _ = _dct_view(tmp_path)
+    config = LocalPhaseConfig(max_response_bytes=1)
+    with pytest.raises(MemoryError, match="RESOURCE_LIMIT"):
+        DctViewContext.from_capture(view.capture, config, _receipt(config))
+
+
+def test_a6_context_refuses_different_receipt_before_global_encoding(tmp_path, monkeypatch):
+    (tmp_path / "input").mkdir()
+    (tmp_path / "clip").mkdir()
+    view, _, receipt = _dct_view(tmp_path / "input")
+    clip, _, _, _ = _fixture(tmp_path / "clip")
+    text = clip.encode(
+        ("people move together",),
+        caption_commitments=(_commitment("one"),),
+        batch_size=1,
+    )
+    model = ContinuousRetrievalSystem(
+        BaseRetrievalSystem(_MockB2(), embedding_dim=512),
+        relation_kind="true_mean_difference_dct",
+        dct_floor_receipt=receipt,
+    )
+    context = DctViewContext.from_capture(view.capture, view.phase_field.config, receipt)
+    other = _receipt(view.phase_field.config, np.full(6, 0.01, np.float64))
+    assert other.sha256 != receipt.sha256
+    monkeypatch.setattr(model, "encode_global", lambda _: pytest.fail("global encoding started"))
+    with pytest.raises(ValueError, match="floor receipt"):
+        model.score(
+            (replace(view, phase_field=replace(context, dct_floor_receipt_sha256=other.sha256)),),
+            text,
+        )
+    with pytest.raises(ValueError, match="floor receipt"):
+        DctRelationField.from_capture(
+            view.capture, replace(context, dct_floor_receipt_sha256=other.sha256),
+            dct_floor_receipt=receipt,
+        )
+    with pytest.raises(MemoryError, match="RESOURCE_LIMIT"):
+        model.score(
+            (replace(view, phase_field=replace(context, config=LocalPhaseConfig(max_response_bytes=1))),),
+            text,
+        )
 
 
 def test_a6_retrieval_seam_requires_independent_floors_and_keeps_head_capacity():

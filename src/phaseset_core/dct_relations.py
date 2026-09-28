@@ -29,6 +29,20 @@ from .directional_phase import (
 from .periodic import ResourceLimitError
 
 
+def require_dct_working_budget(actor_count: int, frame_count: int, config: LocalPhaseConfig) -> None:
+    """Reject a complete A6 timeline before loading or encoding it."""
+    if (
+        type(actor_count) is not int
+        or actor_count < 2
+        or type(frame_count) is not int
+        or frame_count < 2
+        or type(config) is not LocalPhaseConfig
+    ):
+        raise ValueError("A6 working-set preflight requires valid capture dimensions and config")
+    if actor_count * frame_count * 66 * 128 > config.max_response_bytes:
+        raise MemoryError("RESOURCE_LIMIT: A6 full-timeline DCT working set exceeds budget")
+
+
 @dataclass(frozen=True)
 class LocalDctPairChunk(LocalPairChunk):
     """The legacy ``phase_mask`` slot means calibrated DCT evidence here."""
@@ -43,13 +57,54 @@ class LocalDctPairChunk(LocalPairChunk):
 
 
 @dataclass(frozen=True)
+class DctViewContext:
+    """A6 lineage/patch context; it contains no Morlet response or cache."""
+
+    config: LocalPhaseConfig
+    intervals: tuple[tuple[int, int], ...]
+    source_sha256: str
+    actor_commitments: tuple[bytes, ...]
+    physical_view_sha256: str
+    dct_floor_receipt_sha256: str
+
+    @classmethod
+    def from_capture(
+        cls,
+        capture: PreparedContinuousCapture,
+        config: LocalPhaseConfig,
+        dct_floor_receipt: DctFloorReceipt,
+    ) -> DctViewContext:
+        if type(capture) is not PreparedContinuousCapture or type(config) is not LocalPhaseConfig:
+            raise TypeError("A6 context requires an exact prepared capture and config")
+        if type(dct_floor_receipt) is not DctFloorReceipt:
+            raise TypeError("A6 context requires a typed DCT floor receipt")
+        dct_floor_receipt.require_config(config)
+        if not 2 <= config.patch_frames <= 40:
+            raise ValueError("A6 context patch length must be in [2,40]")
+        require_dct_working_budget(capture.actor_count, capture.frame_count, config)
+        return cls(
+            config,
+            _patch_intervals(capture.frame_count, config),
+            capture.source_sha256,
+            capture.actor_commitments,
+            physical_view_sha256(capture),
+            dct_floor_receipt.sha256,
+        )
+
+    @property
+    def actor_count(self) -> int:
+        return len(self.actor_commitments)
+
+
+@dataclass(frozen=True)
 class DctRelationField:
     """Complete-capture A6 field with bounded, recomputed unordered edge chunks.
 
     Every actor feature and root is recomputed from the same body22 capture as
-    the DCT velocities. The admitted phase field supplies only the frozen
-    patch configuration and a cross-check of source/view lineage; none of its
-    learned context or Morlet response is retained in this A6 field.
+    the DCT velocities. A lightweight A6 context supplies frozen patch and
+    source/view lineage without loading Morlet cache. The legacy phase-field
+    context remains accepted for data-free compatibility tests only; neither
+    path retains a Morlet response in this A6 field.
     """
 
     config: LocalPhaseConfig
@@ -67,12 +122,15 @@ class DctRelationField:
     def from_capture(
         cls,
         capture: PreparedContinuousCapture,
-        phase_field: DirectionalPhaseField,
+        phase_field: DirectionalPhaseField | DctViewContext,
         *,
         dct_floor_receipt: DctFloorReceipt,
     ) -> DctRelationField:
-        if type(capture) is not PreparedContinuousCapture or type(phase_field) is not DirectionalPhaseField:
-            raise TypeError("A6 requires an admitted continuous capture and phase field")
+        if type(capture) is not PreparedContinuousCapture or type(phase_field) not in (
+            DirectionalPhaseField,
+            DctViewContext,
+        ):
+            raise TypeError("A6 requires an admitted capture and typed relation context")
         if (
             phase_field.actor_count != capture.actor_count
             or phase_field.intervals[-1][1] != capture.frame_count
@@ -85,6 +143,15 @@ class DctRelationField:
         if type(dct_floor_receipt) is not DctFloorReceipt:
             raise TypeError("A6 requires a typed DCT floor receipt")
         dct_floor_receipt.require_config(phase_field.config)
+        if (
+            type(phase_field) is DctViewContext
+            and phase_field.dct_floor_receipt_sha256 != dct_floor_receipt.sha256
+        ):
+            raise ValueError("A6 context DCT floor receipt differs from the model")
+        # The legacy config's response-byte gate is the shared physical
+        # working-set budget. Count complete signed-velocity intermediates
+        # before materializing any full-timeline float64 arrays.
+        require_dct_working_budget(capture.actor_count, capture.frame_count, phase_field.config)
         values, masks = _signed_velocity_arrays(
             capture.skeletons[None],
             capture.track_mask[None],

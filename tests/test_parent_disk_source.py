@@ -11,6 +11,9 @@ from phaseset_core.parent_disk_source import (
     ParentDiskRecord,
     deterministic_parent_yaw,
 )
+from phaseset_core.dct_calibration import DCT_FLOOR_SCHEMA, DctFloorReceipt, dct_config_sha256
+from phaseset_core.dct_relations import DctViewContext
+from phaseset_core.directional_phase import LocalPhaseConfig
 from phaseset_core.parent_retrieval_task import ParentCaptionRecord, ParentRetrievalTask
 from phaseset_core.tmr_feature_cache import FrozenTMRRowCache, save_frozen_tmr_rows
 from phaseset_core.tmr_set import TMRTextBatch
@@ -78,6 +81,54 @@ def test_phase_views_recompute_every_field_and_validation_reuses_cache(tmp_path)
     text = source.tmr_text(parent.captions * 2)
     assert len(text.tokens) == 2 and torch.equal(text.tokens[0], text.tokens[1])
     assert torch.equal(source.wamo_cls(parent.captions), text.tokens[:1, 0])
+
+
+def test_a6_disk_views_use_body22_without_morlet_cache(tmp_path, monkeypatch):
+    source, parent, original, task, row = _source(tmp_path, phase=False)
+    receipt = DctFloorReceipt(
+        DCT_FLOOR_SCHEMA,
+        "main",
+        ("C01",),
+        "a" * 64,
+        dct_config_sha256(LocalPhaseConfig()),
+        np.full(6, 1e-3, dtype=np.float64),
+    )
+    body_only = replace(row, physical_directory=None, physical_record=None)
+    dct_source = DevelopmentParentDiskSource(
+        task,
+        (body_only,),
+        yaw_eligibility={"b" * 64: True},
+        language_rows=source.language_rows,
+        dct_floor_receipt=receipt,
+    )
+    view = dct_source.view(parent, seed=1729, epoch=0, training=False)
+    assert type(view.phase_field) is DctViewContext
+    assert not view.reused_physical_cache and not hasattr(view.phase_field, "responses")
+    np.testing.assert_array_equal(view.capture.skeletons, original.capture.skeletons)
+    assert view.phase_field.physical_view_sha256
+    assert view.phase_field.dct_floor_receipt_sha256 == receipt.sha256
+    rotated = dct_source.view(parent, seed=1729, epoch=1, training=True)
+    assert type(rotated.phase_field) is DctViewContext
+    assert rotated.capture.augmentation_yaw != 0.0
+    enormous = replace(
+        body_only,
+        prepared_record={**body_only.prepared_record, "shape": [2, 1_000_000, 22, 3]},
+    )
+    dct_source.records[parent.annotation_family_sha256] = enormous
+    monkeypatch.setattr(
+        dct_source, "capture", lambda *args, **kwargs: pytest.fail("body load started")
+    )
+    with pytest.raises(MemoryError, match="RESOURCE_LIMIT"):
+        dct_source.view(parent, seed=1729, epoch=0, training=False)
+    with pytest.raises(ValueError, match="not be admitted together"):
+        DevelopmentParentDiskSource(
+            task,
+            (row,),
+            yaw_eligibility={"b" * 64: True},
+            language_rows=source.language_rows,
+            energy_floors=np.zeros(6),
+            dct_floor_receipt=receipt,
+        )
 
 
 def test_unapproved_caption_yaw_and_task_drift_do_not_get_silent_defaults(tmp_path):

@@ -18,7 +18,8 @@ from torch.nn import functional as F
 from .capture_validation import _validate_text_batch
 from .continuous_training_input import ContinuousTrainingView
 from .dct_calibration import DctFloorReceipt
-from .dct_relations import DctRelationField
+from .dct_relations import DctRelationField, DctViewContext, require_dct_working_budget
+from .directional_phase import DirectionalPhaseField
 from .frozen_clip_text import FrozenClipTextBatch
 from .pipeline import collate_group_samples, edge_budget_batches
 from .temporal_coordination import (
@@ -244,16 +245,25 @@ class ContinuousRetrievalSystem(nn.Module):
                 view.phase_field.intervals[-1][1] != view.capture.frame_count
             ):
                 raise ValueError("the coordination field must span the complete capture")
+            if self.relation_kind != "phase":
+                if type(view.phase_field) is not DctViewContext:
+                    raise ValueError("A6 retrieval requires the DCT-only context")
+                if view.phase_field.dct_floor_receipt_sha256 != self._dct_receipt_sha256:
+                    raise ValueError("A6 view DCT floor receipt differs from the model")
+                require_dct_working_budget(
+                    view.capture.actor_count, view.capture.frame_count, view.phase_field.config
+                )
             base_rows.append(self.encode_global(view))
-            physical = (
-                view.phase_field
-                if self.relation_kind == "phase"
-                else DctRelationField.from_capture(
+            if self.relation_kind == "phase":
+                if type(view.phase_field) is not DirectionalPhaseField:
+                    raise ValueError("phase retrieval requires the complete Morlet field")
+                physical = view.phase_field
+            else:
+                physical = DctRelationField.from_capture(
                     view.capture,
                     view.phase_field,
                     dct_floor_receipt=self._dct_floor_receipt,
                 )
-            )
             output = self.coordination.score_text(physical, adapted_text)
             relation_rows.append(output.cosine)
             supports.append(output.periodic_support)

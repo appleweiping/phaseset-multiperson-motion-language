@@ -224,7 +224,7 @@ class ContinuousRetrievalSystem(nn.Module):
             or state.ndim != 1
             or not torch.equal(state.detach().cpu(), self.get_extra_state())
         ):
-            raise ValueError("relation identity or floor receipt changed across checkpoint resume")
+            raise ValueError("relation kind, frontend, or floor receipt changed across checkpoint resume")
         self._check_dct_floor_binding()
         self._check_speed_floor_binding()
 

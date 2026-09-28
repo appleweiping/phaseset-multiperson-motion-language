@@ -268,6 +268,65 @@ def test_pilot_step_fraction_is_exact_and_unsupported_family_is_rejected(tmp_pat
     assert budget.summary()["usage"]["pilot_reservations"] == 0
 
 
+def test_pilot_admission_is_atomic_with_journal_cursor_and_formal_freeze(tmp_path):
+    (tmp_path / "unsettled").mkdir()
+    budget = create(tmp_path / "unsettled")
+    reserve(budget, attempt="analytic-profile")
+    with pytest.raises(StudyBudgetError, match="settled known-cursor"):
+        reserve(
+            budget,
+            attempt="analytic-pilot",
+            run_id="analytic-pilot",
+            purpose="pilot",
+            family="B2",
+            gpu_count=1,
+            planned_steps=12,
+        )
+    settle(budget, attempt="analytic-profile", completed_steps=None)
+    with pytest.raises(StudyBudgetError, match="settled known-cursor"):
+        reserve(
+            budget,
+            attempt="analytic-pilot",
+            run_id="analytic-pilot",
+            purpose="pilot",
+            family="B2",
+            gpu_count=1,
+            planned_steps=12,
+        )
+
+    (tmp_path / "freeze").mkdir()
+    budget = create(tmp_path / "freeze")
+    reserve(
+        budget,
+        attempt="analytic-pilot",
+        run_id="analytic-pilot",
+        purpose="pilot",
+        family="B2",
+        gpu_count=1,
+        planned_steps=12,
+    )
+    with pytest.raises(StudyBudgetError, match="pilot is unsettled"):
+        freeze(budget)
+    settle(
+        budget,
+        attempt="analytic-pilot",
+        actual_wall_seconds=0,
+        completed_steps=0,
+        outcome="NOT_STARTED",
+    )
+    freeze(budget)
+    with pytest.raises(StudyBudgetError, match="pre-formal"):
+        reserve(
+            budget,
+            attempt="analytic-late-pilot",
+            run_id="analytic-late-pilot",
+            purpose="pilot",
+            family="B2",
+            gpu_count=1,
+            planned_steps=12,
+        )
+
+
 def test_formal_needs_all_87_step_limits_once_and_exact_seed_schedule(tmp_path):
     budget = create(tmp_path)
     with pytest.raises(StudyBudgetError, match="freeze"):

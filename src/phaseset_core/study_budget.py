@@ -259,6 +259,8 @@ class StudyBudget:
             state = self._state()
             if state["step_limits"] is not None:
                 raise StudyBudgetError("formal step limits are immutable once recorded")
+            if any(row["purpose"] == "pilot" for row in state["pending"].values()):
+                raise StudyBudgetError("cannot freeze formal limits while a pilot is unsettled")
             if set(run_max_steps) != set(state["history"]["run_seeds"]):
                 raise StudyBudgetError("formal step limits must cover all 87 registered stages")
             for value in run_max_steps.values():
@@ -328,6 +330,15 @@ class StudyBudget:
                     "profile/pilot IDs must not occupy registered formal run IDs"
                 )
             if purpose == "pilot":
+                if (
+                    state["step_limits"] is not None
+                    or usage["formal_reservations"]
+                    or state["pending"]
+                    or any(row["completed_steps"] is None for row in state["settled"].values())
+                ):
+                    raise StudyBudgetError(
+                        "pilot requires a settled known-cursor pre-formal journal"
+                    )
                 if same_run or family not in PILOT_ALLOCATION:
                     raise StudyBudgetError(
                         "each pilot stage is unique and uses a registered family"

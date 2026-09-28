@@ -23,6 +23,7 @@ from .continuous_training_input import (
 )
 from .dct_calibration import DctFloorReceipt
 from .dct_relations import DctViewContext, require_dct_working_budget
+from .legacy_scalar_calibration import LegacyScalarFloorReceipt
 from .directional_phase import LocalPhaseConfig, VELOCITY_MODES
 from .speed_calibration import SpeedFloorReceipt
 from .parent_retrieval_task import ParentCaptionRecord, ParentRetrievalTask
@@ -61,7 +62,7 @@ def deterministic_parent_yaw(source_sha256: str, *, seed: int, epoch: int) -> fl
 class DevelopmentParentDiskSource:
     """Stream exact full timelines; never keep a dataset-sized RAM cache.
 
-    TMR/WaMo and base ``capture`` views load body arrays only. Residual ``view``
+    TMR/WaMo, base and typed legacy ``capture`` views load body arrays only. V2 ``view``
     additionally loads the complete physical cache and the operator-admitted
     training-only floors, recomputing all physical features for nonzero yaw.
     No stale zero-yaw approximation, timeline truncation or sampled window
@@ -86,6 +87,8 @@ class DevelopmentParentDiskSource:
         weak_clip_rows: ParentWeakClipRows | None = None,
         velocity_mode: str = "signed_vector",
         speed_floor_receipt: SpeedFloorReceipt | None = None,
+        legacy_floor_receipt: LegacyScalarFloorReceipt | None = None,
+        legacy_training_source_manifest_sha256: str | None = None,
     ):
         if type(task) is not ParentRetrievalTask or any(
             type(record) is not ParentDiskRecord for record in records
@@ -104,6 +107,20 @@ class DevelopmentParentDiskSource:
             raise TypeError("need the closed frozen TMR/WaMo human feature rows")
         if energy_floors is not None and dct_floor_receipt is not None:
             raise ValueError("phase and A6 floors must not be admitted together")
+        if legacy_floor_receipt is not None:
+            if (
+                type(legacy_floor_receipt) is not LegacyScalarFloorReceipt
+                or energy_floors is not None
+                or dct_floor_receipt is not None
+                or speed_floor_receipt is not None
+                or legacy_training_source_manifest_sha256
+                != legacy_floor_receipt.training_source_manifest_sha256
+            ):
+                raise ValueError("legacy capture-only source requires its typed scalar receipt alone")
+        elif legacy_training_source_manifest_sha256 is not None:
+            raise ValueError("legacy training manifest cannot enter a nonlegacy source")
+        self.legacy_floor_receipt = legacy_floor_receipt
+        self.legacy_training_source_manifest_sha256 = legacy_training_source_manifest_sha256
         if velocity_mode not in VELOCITY_MODES or (
             velocity_mode == "speed_only" and energy_floors is None
         ):

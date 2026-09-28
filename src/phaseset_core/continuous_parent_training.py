@@ -22,6 +22,7 @@ from .capture_validation import _validate_text_batch
 from .continuous_base_retrieval import ContinuousBaseRetrievalSystem
 from .continuous_capture import PreparedContinuousCapture
 from .continuous_retrieval import ContinuousRetrievalSystem
+from .legacy_continuous_retrieval import LegacyWholeCaptureRetrievalSystem
 from .continuous_training_input import ContinuousTrainingView
 from .frozen_clip_text import FrozenClipTextBatch
 from .objectives import variable_positive_symmetric_infonce
@@ -271,7 +272,7 @@ def validate_parent_text_batch(
 
 
 def backward_loaded_parent_batch(
-    system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem,
+    system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem | LegacyWholeCaptureRetrievalSystem,
     labels: ParentRetrievalBatch,
     text_batch: FrozenClipTextBatch,
     *,
@@ -288,8 +289,11 @@ def backward_loaded_parent_batch(
     replay; a deterministic private source may instead derive yaw from epoch
     and source. No physical batch tuple or all-capture graph is retained here.
     """
-    if not isinstance(system, (ContinuousRetrievalSystem, ContinuousBaseRetrievalSystem)):
-        raise TypeError("complete parent training requires a base or V2 retrieval system")
+    if not isinstance(
+        system,
+        (ContinuousRetrievalSystem, ContinuousBaseRetrievalSystem, LegacyWholeCaptureRetrievalSystem),
+    ):
+        raise TypeError("complete parent training requires a base, V2 or legacy retrieval system")
     if (
         not labels.parents
         or len(set(labels.motion_source_keys)) != len(labels.parents)
@@ -408,13 +412,13 @@ def backward_loaded_parent_batch(
 
 
 def parent_input_capture(
-    system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem,
+    system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem | LegacyWholeCaptureRetrievalSystem,
     view: ContinuousTrainingView | PreparedContinuousCapture,
 ) -> PreparedContinuousCapture:
-    """Keep the actual base and residual physical-input contracts distinct."""
-    if isinstance(system, ContinuousBaseRetrievalSystem):
+    """Keep base/legacy body captures separate from the V2 phase view."""
+    if isinstance(system, (ContinuousBaseRetrievalSystem, LegacyWholeCaptureRetrievalSystem)):
         if type(view) is not PreparedContinuousCapture:
-            raise ValueError("base loader must return a prepared capture, not a phase view")
+            raise ValueError("base/legacy loader must return a prepared capture, not a phase view")
         return view
     if type(view) is not ContinuousTrainingView:
         raise ValueError("residual loader must return the complete phase training view")

@@ -24,13 +24,19 @@ census. The receipt binds the private source-manifest digest, population,
 physical kernel identity, floor bytes and diagnostics. The data-free test uses
 a synthetic receipt and does not imply that native floors were fitted.
 
-The generic complete-parent training host deliberately does **not** accept
-this scorer yet. The registered real training-only scalar-floor receipt,
-old/A9 run identities, predecessor checkpoint binding and score-plus-VJP host
-qualification are separate prerequisites before formal training or sealed
-evaluation.
+The complete-parent training host admits this scorer only when the source,
+scorer and host bindings name the same typed scalar-floor receipt, its training
+population matches the host, and the run ID/seed/system/B2 predecessor is one
+of the six old/A9 rows in the V2 matrix. The current host candidate also pins
+main training/validation components, 20 epochs and its optimizer/CF defaults;
+these defaults are not a completed pilot freeze. A short synthetic run cannot
+be labeled as a formal row. The base and V2 host paths reject a
+legacy receipt. The host still does not establish data rights,
+provenance or run budget by itself; the private operator must verify those
+inputs and the real server qualification before formal training. No final-test
+interface is added.
 
-The data-free CPU qualification checks both modes' score decomposition, frozen
-B2 gradients, floor mutation rejection, host rejection, and the existing old
-capture/A9 regression suites. Passing those checks is software qualification,
-not a retrieval result or evidence for a paper claim.
+Data-free tests check both modes' score decomposition, frozen B2 gradients,
+floor mutation rejection, unbound-host rejection, guarded score/VJP replay and
+short-run mislabeling rejection on synthetic inputs. Passing those checks is
+software qualification, not a retrieval result or evidence for a paper claim.

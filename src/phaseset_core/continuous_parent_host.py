@@ -31,6 +31,8 @@ from .continuous_parent_training import (
     validate_parent_text_batch,
 )
 from .continuous_retrieval import ContinuousRetrievalSystem
+from .legacy_continuous_retrieval import LegacyWholeCaptureRetrievalSystem
+from .legacy_scalar_calibration import LegacyScalarFloorReceipt
 from .continuous_training_input import ContinuousTrainingView
 from .frozen_clip_text import FrozenClipTextBatch
 from .parent_retrieval_task import ParentCaptionRecord, ParentRetrievalBatch, ParentRetrievalTask
@@ -174,10 +176,18 @@ class ParentHostBindings:
     code_manifest_sha256: str
     runtime_sha256: str
     frozen_base_checkpoint_sha256: str | None
+    legacy_floor_receipt_sha256: str | None = None
+    legacy_training_source_manifest_sha256: str | None = None
+    legacy_frozen_b2_state_sha256: str | None = None
 
     def __post_init__(self):
         for name, value in asdict(self).items():
-            if name == "frozen_base_checkpoint_sha256" and value is None:
+            if name in (
+                "frozen_base_checkpoint_sha256",
+                "legacy_floor_receipt_sha256",
+                "legacy_training_source_manifest_sha256",
+                "legacy_frozen_b2_state_sha256",
+            ) and value is None:
                 continue
             if (
                 type(value) is not str
@@ -234,7 +244,7 @@ class ContinuousParentTrainingHost:
 
     def __init__(
         self,
-        system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem,
+        system: ContinuousRetrievalSystem | ContinuousBaseRetrievalSystem | LegacyWholeCaptureRetrievalSystem,
         task: ParentRetrievalTask,
         source: ParentTrainingSource,
         config: ParentHostConfig,
@@ -242,13 +252,67 @@ class ContinuousParentTrainingHost:
         *,
         run_identity: ParentHostRunIdentity | None = None,
     ):
-        if not isinstance(system, (ContinuousRetrievalSystem, ContinuousBaseRetrievalSystem)):
-            raise TypeError("this host requires an actual complete-parent base or V2 scorer")
+        if not isinstance(
+            system,
+            (ContinuousRetrievalSystem, ContinuousBaseRetrievalSystem, LegacyWholeCaptureRetrievalSystem),
+        ):
+            raise TypeError("this host requires an actual complete-parent base, V2 or legacy scorer")
         self._is_base = isinstance(system, ContinuousBaseRetrievalSystem)
+        self._is_legacy = isinstance(system, LegacyWholeCaptureRetrievalSystem)
         if config.stage != ("base" if self._is_base else "residual"):
             raise ValueError("host stage does not match the actual scorer")
         if (bindings.frozen_base_checkpoint_sha256 is None) != self._is_base:
             raise ValueError("only a residual stage binds a frozen B2 checkpoint")
+        if self._is_legacy:
+            receipt = getattr(source, "legacy_floor_receipt", None)
+            if (
+                type(receipt) is not LegacyScalarFloorReceipt
+                or receipt.sha256 != system.floor_receipt.sha256
+                or bindings.legacy_floor_receipt_sha256 != receipt.sha256
+                or getattr(source, "legacy_training_source_manifest_sha256", None)
+                != receipt.training_source_manifest_sha256
+                or bindings.legacy_training_source_manifest_sha256
+                != receipt.training_source_manifest_sha256
+                or bindings.legacy_frozen_b2_state_sha256
+                != _stable_hash(system.frozen_b2.state_dict())
+            ):
+                raise ValueError("legacy source, scorer, B2 state and host must bind one typed floor receipt")
+            receipt.require_population(tuple(sorted(config.train_components)))
+            if (
+                tuple(sorted(config.train_components))
+                != ("C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C10", "C12", "C13", "C14")
+                or tuple(sorted(config.validation_components)) != ("C00",)
+                or config.epochs != 20
+                or config.parent_batch_size != 128
+                or config.learning_rate != 3e-4
+                or config.cf_weight != 0.2
+                or config.cf_margin != 0.2
+                or config.optimizer != "adamw"
+                or config.weight_decay != 0.01
+            ):
+                raise ValueError("legacy registered main schedule/population differs from current host candidate")
+            registered = {
+                ("old", 1729): ("V2-019", "PhaseSet-v0.2-on-B2", "V2-007"),
+                ("old", 2718): ("V2-020", "PhaseSet-v0.2-on-B2", "V2-008"),
+                ("old", 31415): ("V2-021", "PhaseSet-v0.2-on-B2", "V2-009"),
+                ("A9", 1729): ("V2-049", "A9", "V2-007"),
+                ("A9", 2718): ("V2-050", "A9", "V2-008"),
+                ("A9", 31415): ("V2-051", "A9", "V2-009"),
+            }
+            expected = registered.get((system.score_mode, config.seed))
+            if type(run_identity) is not ParentHostRunIdentity or expected is None or (
+                run_identity.run_id, run_identity.system_id, run_identity.predecessor_run_id
+            ) != expected:
+                raise ValueError("legacy host requires its exact frozen-matrix run and B2 predecessor")
+        elif any(
+            value is not None
+            for value in (
+                bindings.legacy_floor_receipt_sha256,
+                bindings.legacy_training_source_manifest_sha256,
+                bindings.legacy_frozen_b2_state_sha256,
+            )
+        ):
+            raise ValueError("legacy floor binding cannot enter a nonlegacy host")
         if run_identity is not None:
             if type(run_identity) is not ParentHostRunIdentity:
                 raise TypeError("registered run identity must be exact")

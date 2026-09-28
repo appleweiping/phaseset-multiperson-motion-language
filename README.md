@@ -37,9 +37,130 @@ multi-person skeleton sequence
   an independently hashed 20-Hz formula bank after resampling. This is a
   compatibility boundary, not a claim that the two kernel banks or full models
   are bitwise identical. See the
-  [20-Hz rate contract](docs/PHASESET_20HZ_MORLET_CONTRACT.md).
+  [20-Hz rate contract](docs/PHASESET_20HZ_MORLET_CONTRACT.md) and
+  [canonical-byte portability policy](docs/MORLET_PORTABILITY.md).
 
-## Current milestone
+## PhaseSet-V2 research upgrade — 2026-09-26
+
+The user-selected target is now [ACM ICMR 2027](docs/PHASESET_V2_ICMR_TARGET.md).
+
+The subsequent [relation-supervision amendment](docs/PHASESET_V2_RELATION_SUPERVISION_AMENDMENT.md)
+uses existing official human retrieval annotations and permits separately
+disclosed weak machine supervision; no new human annotators are awaited.
+Machine labels are not independent motion ground truth or human-challenge
+success. The [separate weak-CF loss/backward seam](docs/PHASESET_V2_WEAK_CF_TRAINING_SEAM.md)
+has passed 37 scoped server checks, and the
+[cached training-only weak text pool](docs/PHASESET_V2_WEAK_CLIP_POOL.md) has passed
+24 additional scoped checks. Actual generation, encoded weak text and private
+provenance admission remain pending. Neither is a completed native training run.
+
+A [complete-native-parent CPU profile](docs/PHASESET_V2_NATIVE_PROCESS_PROFILE.md)
+has now passed through the production lifecycle and journal: both 512-D systems,
+all 55 accepted windows and 10 official human rows, full-negative backward
+replay, unchanged weights, zero optimizer/GPU use. This is not formal training,
+GPU throughput or a paper retrieval result; formal stages remain **0/87**.
+The venue amendment changes submission format, not the scientific matrix or
+compute budget. The existing ICASSP manuscript is historical, not an ICMR-ready
+paper or a submitted result.
+
+The new [V2 amendment](docs/PHASESET_V2_AMENDMENT.md) introduces signed local
+phase, time-varying actor–edge incidence, chronological capture readout, and
+verified counterfactual coordination supervision. The
+[87-stage matrix](configs/phaseset_v2_experiment_matrix.json) supersedes the
+affected legacy 33-run plan. New modules are independent research APIs; the
+production V2 training-host integration and converged literature reproductions
+are not yet qualified.
+The V2 A6 comparator now has a data-free, whole-capture relation seam that
+forms actual `(a+b)/2` and `a-b` velocity signals *before* six-band DCT,
+retaining their cross term. This is distinct from legacy system 03's separate
+endpoint self-power control and is not an InterEdit reproduction. A6 requires
+its own typed, training-population DCT-floor receipt. Five real training-only
+floor populations and the [native source-binding qualification](docs/PHASESET_V2_A6_SOURCE_QUALIFICATION.md)
+have private server receipts; future run-bound GPU, cost, and checkpoint
+admission remains separate. Neither the source check nor its CPU tests
+constitute an A6 training run.
+The [A4 incidence-shuffle control](docs/PHASESET_V2_A4_INCIDENCE.md) preserves
+physical pair packets, edge support and model capacity while deterministically
+reassigning supported half-edge values at the actor-incidence node input. Its
+shuffle is independent of private participant commitments. Software review
+and tests do not count as formal A4 training or retrieval results.
+The [A2 order-free control](docs/PHASESET_V2_A2_ORDER_FREE.md) replaces all
+four learned temporal GRU paths with near-equal-capacity independent patch
+MLPs and masked means while retaining the same physical phase input. It tests
+the contribution of learned order, not the existence of physical phase.
+The [A3 capacity-matched pair-bag control](docs/PHASESET_V2_A3_PAIR_BAG.md)
+keeps the full head's active node and edge modules but pools relation packets
+without assigning them to actor nodes. It is distinct from the legacy
+topology-off pair-only diagnostic and has no reported retrieval result yet.
+The [matrix-bound V2 mechanism factory](docs/PHASESET_V2_MECHANISM_FACTORY.md)
+constructs the implemented main B2 and full/A1/A2/A3/A4/A5/A6/A7/A8 host paths
+with registered seeds, predecessor/terminal and source bindings. The A7
+focused registered-server CPU qualification passed 42 tests with one
+CUDA-only skip; it grants no pilot or
+formal launch, and A9, fold hosts and Inter-X remain held. A7 is a
+[generic local relation control](docs/PHASESET_V2_A7_GENERIC_LOCAL.md): its
+scores ignore phase features, while its shared input transport still incurs
+phase-cache preparation cost.
+[TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
+complete original VAE objectives with disclosed full-parent group adaptation;
+its pinned frozen language loader is not a substitute for native learning.
+[WaMo-Set](docs/WAMO_SET_ADAPTATION.md) implements learnable stationary analysis
+and inverse wavelets, both reconstruction branches and original/shuffled-frame
+ordering, with explicit full-parent group adaptation and unpublished-detail
+choices. Its software qualification is not converged baseline training.
+[MIME](docs/MIME_SET_ADAPTATION.md) keeps separate role-aware original dyadic
+and shared complete-parent group APIs, full-time bidirectional co-attention,
+and a genuinely trainable pinned CLIP text tower. Group XYZ/long-text adapters
+are disclosed; equation/software checks are not original-task convergence.
+Their [full-negative parent backward seam](docs/PHASESET_V2_LITERATURE_PARENT_TRAINING.md)
+replays one complete capture graph at a time without dropping original WaMo
+auxiliary objectives or freezing MIME text. Dense-gradient software oracles
+are not native optimizer, profile, checkpoint-host or convergence evidence.
+The separate [TMR VAE parent backward seam](docs/PHASESET_V2_TMR_PARENT_TRAINING.md)
+preserves the original stochastic order, both full-track reconstructions,
+all four KL terms, latent alignment and filtered full-batch negatives; it does
+not route TMR through a generic contrastive-only objective.
+The [literature optimizer host](docs/PHASESET_V2_LITERATURE_PARENT_HOST.md)
+shares the full-parent AdamW, validation selection and checkpoint/resume loop,
+while keeping each baseline's original objective. Analytic optimizer/resume
+checks and native dense-gradient replay are distinct from a native training
+pilot or converged baseline result.
+The [fixed TMR/WaMo language-row cache](docs/PHASESET_V2_FROZEN_LANGUAGE_ROWS.md)
+retains every human caption occurrence and content token, reusing only frozen
+features; MIME still trains its own genuine CLIP tower.
+The [development disk source](docs/PHASESET_V2_PARENT_DISK_SOURCE.md) streams
+complete body/phase timelines and uses source/seed/epoch group yaw independent
+of model RNG. Caption eligibility and run-specific floors remain explicit
+private inputs. The [frozen human CLIP row source](docs/PHASESET_V2_FROZEN_CLIP_ROWS.md)
+connects base/V2 human-only text using exact cached preparation rows with a
+distinct derived receipt, not a new encoder invocation. The genuine verified-CF
+pool and production admission remain pending.
+The [parent operation monitor](docs/PHASESET_V2_PARENT_OPERATION_MONITOR.md)
+holds a process-released lease, emits independent long-operation heartbeats and
+supports explicit recent/best checkpoint retention without deleting predecessor
+or historical evidence. It does not grant formal starts or global compute budget.
+The [persistent study budget](docs/PHASESET_V2_STUDY_BUDGET.md) preserves actual
+historical GPU charges, pending wall-time envelopes, fixed pilot allocations,
+and rooted formal predecessors. Bookkeeping alone does not qualify process
+execution or scientific admission.
+The [Linux process controller](docs/PHASESET_V2_STUDY_PROCESS.md) connects
+reservations to owned child sessions, verified exit and actual wall-time charges.
+Its 23 focused tests ran on the registered Linux server with actual stdlib
+children, not native training. Native GPU integration and scientific admission
+still need their own evidence.
+
+[Server mechanism verification](docs/PHASESET_V2_MECHANISM_VERIFICATION.md)
+records 117 focused CPU tests and one full-width CUDA forward/backward witness.
+There are still **0/87 formal V2 stages** and no native-data retrieval result.
+Approved main-data and licensed body-model assets have been obtained privately,
+and the handoff fold assignments have been recovered. Complete development-parent
+preprocessing and five training-only physical calibrations have closed private
+receipts. Run-specific admission, faithful baseline training, resource profiling,
+and real human relational verification still require actual execution evidence.
+The descriptions and score equation below document the preserved V1 core,
+not completed V2 experiments or a submission-ready paper.
+
+## Preserved V1 milestone
 
 This source snapshot declares `v0.2.1`, the portable-verification patch for the
 stable data-free multi-person core and execution-contract milestone. It is a

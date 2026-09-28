@@ -9,9 +9,10 @@ description = "Permutation-invariant periodic relation tokens for multi-person m
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "MIT"
+license-files = ["LICENSE", "LICENSE_TMR.md"]
 authors = [{ name = "PhaseSet contributors" }]
 dependencies = [
-  "numpy>=1.26,<3",
+  "numpy==2.4.6",
   "torch>=2.10,<2.13",
 ]
 
@@ -23,8 +24,8 @@ Repository = "https://github.com/appleweiping/phaseset-multiperson-motion-langua
 Documentation = "https://github.com/appleweiping/phaseset-multiperson-motion-language/tree/main/docs"
 
 [project.optional-dependencies]
-# The exact signal oracle is presently qualified on Windows x86-64 only.
-# Linux installs remain useful for audits/builds but are not an oracle PASS.
+# Canonical bytes are shared by the strict Windows and Linux formula paths.
+# A matching formula bank alone is not full model/CUDA runtime qualification.
 signal = [
   "numpy==2.4.6",
   "torch==2.12.0",
@@ -32,6 +33,12 @@ signal = [
 clip = [
   "requests==2.34.2",
   "transformers==4.57.3",
+]
+tmr-language = [
+  "transformers==4.57.3",
+]
+embody = [
+  "smplx==0.1.28",
 ]
 test = [
   "pytest==9.0.3",

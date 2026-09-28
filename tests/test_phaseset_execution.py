@@ -164,6 +164,186 @@ def test_open_revalidates_existing_heartbeat_chain(tmp_path: Path) -> None:
         execution.AttemptStore.open(tmp_path, store.attempt.attempt_id)
 
 
+def test_completed_attempt_evidence_returns_owned_bytes_without_second_path_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = execution.AttemptStore.create(tmp_path, _attempt())
+    checkpoint = _checkpoint()
+    checkpoint_raw = execution.canonical_checkpoint_bytes(checkpoint)
+    checkpoint_sha = store.write_checkpoint(checkpoint)
+    terminal = execution.TerminalRecord(
+        attempt_id=store.attempt.attempt_id,
+        run_id=store.attempt.run_id,
+        completed_at_utc="2026-08-25T20:03:00Z",
+        outcome="SUCCEEDED",
+        attempt_receipt_sha256=execution.artifact_sha256(
+            (store.path / "attempt.json").read_bytes()
+        ),
+        latest_heartbeat_sha256=None,
+        latest_checkpoint_receipt_sha256=checkpoint_sha,
+        failure_code=None,
+    )
+    terminal_raw = execution.canonical_terminal_bytes(terminal)
+    store.write_terminal(terminal)
+
+    reads: dict[Path, int] = {}
+    original_read_regular = execution._read_regular
+
+    def counted_read(path: Path, label: str) -> bytes:
+        reads[path] = reads.get(path, 0) + 1
+        return original_read_regular(path, label)
+
+    monkeypatch.setattr(execution, "_read_regular", counted_read)
+    evidence = execution.verified_completed_attempt_evidence(
+        tmp_path,
+        store.attempt.attempt_id,
+    )
+    assert evidence.attempt == store.attempt
+    assert evidence.latest_checkpoint == checkpoint
+    assert evidence.latest_checkpoint_raw == checkpoint_raw
+    assert evidence.terminal == terminal
+    assert evidence.terminal_raw == terminal_raw
+    assert evidence.resume is None
+    assert evidence.resume_raw is None
+    assert evidence.terminal_sha256 == execution.artifact_sha256(terminal_raw)
+    assert evidence.latest_checkpoint_receipt_sha256 == checkpoint_sha
+    assert evidence.latest_checkpoint_payload_sha256 == checkpoint.checkpoint_payload_sha256
+    assert reads == {
+        store.path / "attempt.json": 1,
+        store.path / "checkpoints" / "checkpoint-000000000010.json": 1,
+        store.path / "terminal.json": 1,
+    }
+
+    (store.path / "terminal.json").write_bytes(b"changed after verified return")
+    (store.path / "checkpoints" / "checkpoint-000000000010.json").write_bytes(
+        b"changed after verified return"
+    )
+    assert evidence.terminal_raw == terminal_raw
+    assert evidence.latest_checkpoint_raw == checkpoint_raw
+    with pytest.raises(FrozenInstanceError):
+        evidence.terminal = terminal  # type: ignore[misc]
+
+    rebound_terminal = replace(terminal, attempt_receipt_sha256=DIGESTS[15])
+    with pytest.raises(execution.ExecutionContractError, match="identity is inconsistent"):
+        execution.CompletedAttemptEvidence(
+            attempt=evidence.attempt,
+            attempt_raw=evidence.attempt_raw,
+            latest_checkpoint=evidence.latest_checkpoint,
+            latest_checkpoint_raw=evidence.latest_checkpoint_raw,
+            terminal=rebound_terminal,
+            terminal_raw=execution.canonical_terminal_bytes(rebound_terminal),
+            resume=evidence.resume,
+            resume_raw=evidence.resume_raw,
+        )
+
+
+def test_completed_attempt_evidence_rejects_open_and_failed_attempts(
+    tmp_path: Path,
+) -> None:
+    failed = execution.AttemptStore.create(tmp_path, _attempt("attempt-failed"))
+    with pytest.raises(execution.ExecutionContractError, match="no immutable terminal"):
+        execution.verified_completed_attempt_evidence(tmp_path, "attempt-failed")
+    failed_checkpoint = replace(_checkpoint(), attempt_id="attempt-failed")
+    failed_checkpoint_sha = failed.write_checkpoint(failed_checkpoint)
+    failed.write_terminal(
+        execution.TerminalRecord(
+            attempt_id=failed.attempt.attempt_id,
+            run_id=failed.attempt.run_id,
+            completed_at_utc="2026-08-25T20:03:00Z",
+            outcome="FAILED",
+            attempt_receipt_sha256=execution.artifact_sha256(
+                (failed.path / "attempt.json").read_bytes()
+            ),
+            latest_heartbeat_sha256=None,
+            latest_checkpoint_receipt_sha256=failed_checkpoint_sha,
+            failure_code="INFRA_TRANSIENT",
+        )
+    )
+    with pytest.raises(execution.ExecutionContractError, match="not SUCCEEDED"):
+        execution.verified_completed_attempt_evidence(tmp_path, "attempt-failed")
+
+
+def test_completed_attempt_evidence_revalidates_resume_predecessor_chain(
+    tmp_path: Path,
+) -> None:
+    predecessor = execution.AttemptStore.create(tmp_path, _attempt())
+    predecessor_checkpoint = _checkpoint()
+    predecessor_checkpoint_sha = predecessor.write_checkpoint(predecessor_checkpoint)
+    predecessor_terminal_sha = predecessor.write_terminal(
+        execution.TerminalRecord(
+            attempt_id=predecessor.attempt.attempt_id,
+            run_id=predecessor.attempt.run_id,
+            completed_at_utc="2026-08-25T20:03:00Z",
+            outcome="FAILED",
+            attempt_receipt_sha256=execution.artifact_sha256(
+                (predecessor.path / "attempt.json").read_bytes()
+            ),
+            latest_heartbeat_sha256=None,
+            latest_checkpoint_receipt_sha256=predecessor_checkpoint_sha,
+            failure_code="INFRA_TRANSIENT",
+        )
+    )
+    resumed_attempt = replace(
+        predecessor.attempt,
+        attempt_id="attempt-0002",
+        created_at_utc="2026-08-25T20:04:00Z",
+    )
+    resume = execution.ResumeRecord(
+        new_attempt_id=resumed_attempt.attempt_id,
+        predecessor_attempt_id=predecessor.attempt.attempt_id,
+        run_id=resumed_attempt.run_id,
+        created_at_utc=resumed_attempt.created_at_utc,
+        predecessor_terminal_sha256=predecessor_terminal_sha,
+        checkpoint_receipt_sha256=predecessor_checkpoint_sha,
+        corrective_change_sha256=DIGESTS[13],
+        retry_class="INFRA_TRANSIENT",
+    )
+    resumed = execution.AttemptStore.create_resumed(
+        tmp_path,
+        resumed_attempt,
+        resume,
+    )
+    resumed_checkpoint = replace(
+        _checkpoint(step=20),
+        attempt_id=resumed_attempt.attempt_id,
+        checkpoint_payload_sha256=DIGESTS[12],
+    )
+    resumed_checkpoint_sha = resumed.write_checkpoint(resumed_checkpoint)
+    resumed.write_terminal(
+        execution.TerminalRecord(
+            attempt_id=resumed.attempt.attempt_id,
+            run_id=resumed.attempt.run_id,
+            completed_at_utc="2026-08-25T20:05:00Z",
+            outcome="SUCCEEDED",
+            attempt_receipt_sha256=execution.artifact_sha256(
+                (resumed.path / "attempt.json").read_bytes()
+            ),
+            latest_heartbeat_sha256=None,
+            latest_checkpoint_receipt_sha256=resumed_checkpoint_sha,
+            failure_code=None,
+        )
+    )
+    evidence = execution.verified_completed_attempt_evidence(
+        tmp_path,
+        resumed_attempt.attempt_id,
+    )
+    assert evidence.resume == resume
+    assert evidence.resume_raw == execution.canonical_resume_bytes(resume)
+    assert evidence.latest_checkpoint == resumed_checkpoint
+
+    (predecessor.path / "checkpoints" / "checkpoint-000000000010.json").write_bytes(
+        execution.canonical_checkpoint_bytes(
+            replace(predecessor_checkpoint, checkpoint_payload_sha256=DIGESTS[14])
+        )
+    )
+    with pytest.raises(execution.ExecutionContractError):
+        execution.verified_completed_attempt_evidence(
+            tmp_path,
+            resumed_attempt.attempt_id,
+        )
+
+
 def test_resume_payload_binding_revalidates_recursive_predecessor_chain(
     tmp_path: Path,
 ) -> None:

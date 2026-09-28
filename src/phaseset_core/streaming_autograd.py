@@ -66,6 +66,12 @@ class _StreamingEdgeModel(Protocol):
     ) -> tuple[Tensor, Tensor, Tensor]: ...
 
 
+class _PairChunkStream(Protocol):
+    """Re-iterable descriptor input retained by the custom autograd context."""
+
+    def iter_chunks(self, *, edge_chunk_size: int) -> Iterator[PairChunk]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class StreamingEdgeSummaries:
     """Differentiable summaries plus structural, non-differentiable masks."""
@@ -208,6 +214,7 @@ def _iter_group_microblocks(
     batch: PreparedActivityBatch,
     *,
     edge_chunk_size: int,
+    pair_chunk_stream: _PairChunkStream | None = None,
 ) -> Iterator[PairChunk]:
     """Reblock a runtime stream by group, independent of batch/chunk packing.
 
@@ -232,10 +239,12 @@ def _iter_group_microblocks(
         reverse_tokens.clear()
         supports.clear()
 
-    for runtime_chunk in model._iter_pair_chunks(
-        batch,
-        edge_chunk_size=edge_chunk_size,
-    ):
+    runtime_chunks = (
+        model._iter_pair_chunks(batch, edge_chunk_size=edge_chunk_size)
+        if pair_chunk_stream is None
+        else pair_chunk_stream.iter_chunks(edge_chunk_size=edge_chunk_size)
+    )
+    for runtime_chunk in runtime_chunks:
         for edge in range(int(runtime_chunk.batch_indices.shape[0])):
             group = int(runtime_chunk.batch_indices[edge])
             if pending_group is not None and group != pending_group:
@@ -329,6 +338,7 @@ def _build_global_incidence_routing_plan(
     batch: PreparedActivityBatch,
     *,
     edge_chunk_size: int,
+    pair_chunk_stream: _PairChunkStream | None = None,
 ) -> _GlobalIncidenceRoutingPlan | None:
     """Census all valid endpoint slots without retaining any width-D activation."""
 
@@ -343,6 +353,7 @@ def _build_global_incidence_routing_plan(
         model,
         checked,
         edge_chunk_size=edge_chunk_size,
+        pair_chunk_stream=pair_chunk_stream,
     ):
         for edge in range(int(chunk.batch_indices.shape[0])):
             group = int(chunk.batch_indices[edge])
@@ -431,6 +442,7 @@ def _compute_edge_summaries(
     batch: PreparedActivityBatch,
     *,
     edge_chunk_size: int,
+    pair_chunk_stream: _PairChunkStream | None = None,
 ) -> tuple[StreamingEdgeSummaries, _MomentState]:
     """Run the exact canonical forward reductions under the caller's grad mode."""
 
@@ -442,6 +454,7 @@ def _compute_edge_summaries(
         model,
         checked,
         edge_chunk_size=edge_chunk_size,
+        pair_chunk_stream=pair_chunk_stream,
     )
     incidence_cursors = _incidence_cursors(checked)
 
@@ -489,6 +502,7 @@ def _compute_edge_summaries(
         model,
         checked,
         edge_chunk_size=edge_chunk_size,
+        pair_chunk_stream=pair_chunk_stream,
     ):
         edge_count = int(chunk.batch_indices.shape[0])
         for micro_start in range(0, edge_count, CANONICAL_MICROBLOCK_SIZE):
@@ -687,6 +701,7 @@ def eager_edge_summaries(
     batch: PreparedActivityBatch,
     *,
     edge_chunk_size: int,
+    pair_chunk_stream: _PairChunkStream | None = None,
 ) -> StreamingEdgeSummaries:
     """Autograd-heavy reference path used to audit the analytical VJP."""
 
@@ -694,6 +709,7 @@ def eager_edge_summaries(
         model,
         batch,
         edge_chunk_size=edge_chunk_size,
+        pair_chunk_stream=pair_chunk_stream,
     )
     return summaries
 
@@ -703,6 +719,7 @@ def _stream_parameter_vjp(
     batch: PreparedActivityBatch,
     *,
     edge_chunk_size: int,
+    pair_chunk_stream: _PairChunkStream | None,
     state: _MomentState,
     grad_pair_component: Tensor | None,
     grad_node_statistics: Tensor | None,
@@ -717,6 +734,7 @@ def _stream_parameter_vjp(
         model,
         checked,
         edge_chunk_size=edge_chunk_size,
+        pair_chunk_stream=pair_chunk_stream,
     )
     incidence_cursors = _incidence_cursors(checked)
     if grad_pair_component is None:
@@ -769,6 +787,7 @@ def _stream_parameter_vjp(
         model,
         checked,
         edge_chunk_size=edge_chunk_size,
+        pair_chunk_stream=pair_chunk_stream,
     ):
         edge_count = int(chunk.batch_indices.shape[0])
         for micro_start in range(0, edge_count, CANONICAL_MICROBLOCK_SIZE):
@@ -882,12 +901,14 @@ class _StreamingEdgeSummaryFunction(torch.autograd.Function):
         model: _StreamingEdgeModel,
         batch: PreparedActivityBatch,
         edge_chunk_size: int,
+        pair_chunk_stream: _PairChunkStream | None,
         *parameters: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         ctx.set_materialize_grads(False)
         ctx.model = model
         ctx.batch = batch
         ctx.edge_chunk_size = edge_chunk_size
+        ctx.pair_chunk_stream = pair_chunk_stream
         device_type = next(model.parameters()).device.type
         ctx.autocast_device_type = device_type
         ctx.autocast_enabled = torch.is_autocast_enabled(device_type)
@@ -898,6 +919,7 @@ class _StreamingEdgeSummaryFunction(torch.autograd.Function):
             model,
             batch,
             edge_chunk_size=edge_chunk_size,
+            pair_chunk_stream=pair_chunk_stream,
         )
         ctx.mark_non_differentiable(
             summaries.valid_pair_count,
@@ -918,7 +940,7 @@ class _StreamingEdgeSummaryFunction(torch.autograd.Function):
         grad_node_statistics: Tensor | None,
         grad_valid_pair_count: Tensor | None,
         grad_topology_node_mask: Tensor | None,
-    ) -> tuple[None, None, None, *tuple[Tensor, ...]]:
+    ) -> tuple[None, None, None, None, *tuple[Tensor, ...]]:
         del grad_valid_pair_count, grad_topology_node_mask
         parameters = cast(tuple[Tensor, ...], ctx.saved_tensors)
         with torch.autocast(
@@ -932,6 +954,7 @@ class _StreamingEdgeSummaryFunction(torch.autograd.Function):
                     ctx.model,
                     ctx.batch,
                     edge_chunk_size=ctx.edge_chunk_size,
+                    pair_chunk_stream=ctx.pair_chunk_stream,
                 )
         # Exit and re-enter autocast so a backend cannot reuse a no-grad cached
         # low-precision parameter view during the differentiable replay.
@@ -945,12 +968,13 @@ class _StreamingEdgeSummaryFunction(torch.autograd.Function):
                 ctx.model,
                 ctx.batch,
                 edge_chunk_size=ctx.edge_chunk_size,
+                pair_chunk_stream=ctx.pair_chunk_stream,
                 state=state,
                 grad_pair_component=grad_pair_component,
                 grad_node_statistics=grad_node_statistics,
                 parameters=parameters,
             )
-        return (None, None, None, *gradients)
+        return (None, None, None, None, *gradients)
 
 
 def streaming_edge_summaries(
@@ -958,6 +982,7 @@ def streaming_edge_summaries(
     batch: PreparedActivityBatch,
     *,
     edge_chunk_size: int,
+    pair_chunk_stream: _PairChunkStream | None = None,
 ) -> StreamingEdgeSummaries:
     """Return exact summaries with chunk-recomputed edge-parameter gradients."""
 
@@ -971,12 +996,14 @@ def streaming_edge_summaries(
             model,
             checked,
             edge_chunk_size=edge_chunk_size,
+            pair_chunk_stream=pair_chunk_stream,
         )
         return summaries
     outputs = _StreamingEdgeSummaryFunction.apply(
         model,
         checked,
         edge_chunk_size,
+        pair_chunk_stream,
         *parameters,
     )
     return StreamingEdgeSummaries(*outputs)

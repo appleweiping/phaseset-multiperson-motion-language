@@ -28,34 +28,45 @@ single sealed-test execution and frozen aggregate.
 
 ## Template status
 
-The [official ICASSP 2027 publishing page](https://2027.ieeeicassp.org/publishing-and-paper-presentation-options/)
-confirms four technical pages plus an optional references-only fifth page, but
-its current author section does not expose a downloadable 2027 paper kit in a
-form available to this repository. The source therefore deliberately retains
-the engineering `article` template and labels that fact in `main.tex`. Page
-count in this template is only a drafting constraint. Re-template and re-audit
-page limits, fonts, figures, bibliography, and anonymization against the
-official kit before any submission claim. The official full-paper deadline is
-[September 16, 2026](https://2027.ieeeicassp.org/call-for-papers/).
+The source uses the [official ICASSP 2027 paper kit](https://cmsworkshops.com/ICASSP2027/papers/paper_kit.php),
+unmodified `spconf.sty`, its documented 9 pt mode, and `IEEEbib.bst`. The
+hash-pinned fetch script obtains only those two style files into ignored
+`paper/.venue/`; no example paper or third-party illustration is republished.
+The limit is four technical pages plus an optional fifth page restricted to
+references, acknowledgments, and ethical-compliance statements. This draft's
+fifth page contains references only.
+
+ICASSP 2027 is non-blind. The explicit author/affiliation metadata-pending
+fields must be replaced by the real author list before a submission build.
+Formatting success is not submission readiness. The official full-paper
+deadline is [September 16, 2026](https://2027.ieeeicassp.org/call-for-papers/).
 
 ## Local build
 
-From this directory:
+From the repository root, with Python, `pdflatex`, and `bibtex` installed:
 
 ```text
-pdflatex -interaction=nonstopmode -halt-on-error main.tex
-bibtex main
-pdflatex -interaction=nonstopmode -halt-on-error main.tex
-pdflatex -interaction=nonstopmode -halt-on-error main.tex
+python scripts/build_paper.py
 ```
 
-Verified locally on 2026-08-25 with MiKTeX pdfTeX/BibTeX: the build succeeds as
-a five-page PDF, pages 1–4 contain manuscript content, and page 5 contains only
-references. The final LaTeX log has no undefined citation/reference, multiply
-defined label, overfull box, underfull box, or package warning. The command-line
-tools emit the environment-level advisory “MiKTeX updates have not been
-checked”; this is a toolchain-maintenance notice, not a manuscript warning.
-A generated PDF remains a `NO_RESULT / NOT_FOR_SUBMISSION` engineering artifact.
+For an offline build, add `--template-archive <official-kit.zip>`. Its exact
+SHA-256 is checked; a different archive is not silently accepted. Each build
+gets a new ignored directory, four pass logs, and a source/style/PDF digest
+receipt. The script needs no `latexmk` or Perl and disables TeX shell escape.
+
+Verified on 2026-09-08 with MiKTeX pdfTeX/BibTeX: five pages, technical content
+ends on page 4, page 5 contains only references, no undefined references or
+overfull boxes, and all 18 font entries embedded with no Type 3 fallback. Two underfull horizontal
+boxes, one underfull vertical box, and a nonfatal `balance` warning remain
+reported in the logs. All 57 `HOLD` result cells remain visible. Inspect page
+boundaries, fonts, figures, citations, and claims after every content change.
+A generated PDF remains a `NO_RESULT / NOT_FOR_SUBMISSION` artifact.
+
+`BUILD_RECEIPT.json` binds the checked source, bibliography, official styles,
+and PDF by SHA-256. Both diagrams now have native editable PowerPoint objects,
+alongside draw.io/PDF/SVG/PNG exports. The architecture and method text show the
+implemented parallel fixed-activity periodic branch and learned group base;
+they do not assert that Morlet reads learned base features.
 
 ## Non-negotiable language
 

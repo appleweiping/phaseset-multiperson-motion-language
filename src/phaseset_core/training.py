@@ -26,7 +26,7 @@ import random
 import struct
 import sys
 import types
-from typing import Final, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Final, Literal, Protocol, runtime_checkable
 import uuid
 
 import numpy as np
@@ -35,6 +35,10 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from phaseset_core import execution as execution_module
+
+if TYPE_CHECKING:
+    from .capture_validation import CaptureValidationSource
+    from .periodic_capture_training_cache import PeriodicDescriptorCaptureTrainingPlan
 
 from .contracts import PreparedGroupBatch, validate_prepared_group_batch
 from .execution import (
@@ -56,11 +60,17 @@ from .models import (
     build_group_base,
 )
 from .objectives import PhaseSetRetrievalHead, variable_positive_symmetric_infonce
+from .periodic_descriptor_cache_v2 import CachedPairChunkStream, DescriptorWindowContext
 
 
 STATUS: Final = "DATA_FREE_EXECUTABLE_TRAINING_RUNTIME_NONPRODUCTION_AUTHORITY0"
 CHECKPOINT_SCHEMA: Final = "phaseset-training-checkpoint-v1"
 REPORT_SCHEMA: Final = "phaseset-training-report-v1"
+CACHED_CHECKPOINT_SCHEMA: Final = "phaseset-training-checkpoint-v2-cached-descriptor-plan"
+CACHED_INITIALIZATION_SCHEMA: Final = (
+    "phaseset-training-initialization-binding-v2-cached-descriptor-plan"
+)
+CACHED_REPORT_SCHEMA: Final = "phaseset-training-report-v2-cached-descriptor-plan"
 OFFICIAL_SEEDS: Final = (1729, 2718, 31415)
 RESIDUAL_SYSTEM_IDS: Final = tuple(f"{index:02d}" for index in range(1, 9))
 REGISTERED_BASE_SYSTEM_IDS: Final = ("B0", "B1", "B2")
@@ -134,7 +144,9 @@ class RetrievalTrainingBatch:
     """One edge-budget microbatch with frozen text semantics.
 
     Positive-family identifiers are opaque commitments used only to construct
-    the variable-positive mask.  They never enter either neural tower.
+    the variable-positive mask.  They never enter either neural tower.  An
+    optional descriptor context tuple preserves authenticated prepared-source
+    lineage; its presence alone grants no cache, data, or execution authority.
     """
 
     groups: PreparedGroupBatch
@@ -143,6 +155,7 @@ class RetrievalTrainingBatch:
     text_positive_ids: tuple[bytes, ...]
     text_commitments: tuple[bytes, ...]
     split: Split
+    descriptor_contexts: tuple[DescriptorWindowContext, ...] | None = None
 
     def __post_init__(self) -> None:
         checked = validate_prepared_group_batch(self.groups)
@@ -168,14 +181,12 @@ class RetrievalTrainingBatch:
             or len(self.motion_positive_ids) != checked.batch_size
         ):
             raise TypeError("motion_positive_ids must contain one bytes[32] per motion")
-        if (
-            type(self.text_positive_ids) is not tuple
-            or len(self.text_positive_ids) != int(self.text_embeddings.shape[0])
+        if type(self.text_positive_ids) is not tuple or len(self.text_positive_ids) != int(
+            self.text_embeddings.shape[0]
         ):
             raise TypeError("text_positive_ids must contain one bytes[32] per text")
-        if (
-            type(self.text_commitments) is not tuple
-            or len(self.text_commitments) != int(self.text_embeddings.shape[0])
+        if type(self.text_commitments) is not tuple or len(self.text_commitments) != int(
+            self.text_embeddings.shape[0]
         ):
             raise TypeError("text_commitments must contain one bytes[32] per text")
         motions = tuple(
@@ -196,6 +207,39 @@ class RetrievalTrainingBatch:
             raise TrainingRuntimeError("every motion must have a positive text in its microbatch")
         if any(value not in motions for value in texts):
             raise TrainingRuntimeError("every text must have a positive motion in its microbatch")
+        contexts = self.descriptor_contexts
+        if contexts is not None:
+            if type(contexts) is not tuple or len(contexts) != checked.batch_size:
+                raise TypeError(
+                    "descriptor_contexts must be None or an exact tuple covering every motion"
+                )
+            if any(type(context) is not DescriptorWindowContext for context in contexts):
+                raise TypeError(
+                    "descriptor_contexts must contain exact DescriptorWindowContext values"
+                )
+            first = contexts[0]
+            for index, context in enumerate(contexts):
+                if context.window_sha256 != motions[index].hex():
+                    raise TrainingRuntimeError(
+                        "descriptor window identity differs from its motion positive family"
+                    )
+                if context.split != self.split:
+                    raise TrainingRuntimeError(
+                        "descriptor context split differs from its training batch"
+                    )
+                if (
+                    context.prepared_manifest_sha256 != first.prepared_manifest_sha256
+                    or context.source_batch_sha256 != first.source_batch_sha256
+                    or context.seed != first.seed
+                    or context.epoch != first.epoch
+                ):
+                    raise TrainingRuntimeError(
+                        "one training batch cannot mix descriptor source, seed, or epoch"
+                    )
+            if len({context.window_sha256 for context in contexts}) != len(contexts):
+                raise TrainingRuntimeError("descriptor contexts repeat a window identity")
+            if len({context.window_ordinal for context in contexts}) != len(contexts):
+                raise TrainingRuntimeError("descriptor contexts repeat a window ordinal")
         # Snapshot text values so a host iterator cannot mutate an in-flight epoch.
         frozen_text = self.text_embeddings.detach().clone(memory_format=torch.contiguous_format)
         object.__setattr__(self, "groups", checked)
@@ -203,6 +247,7 @@ class RetrievalTrainingBatch:
         object.__setattr__(self, "motion_positive_ids", motions)
         object.__setattr__(self, "text_positive_ids", texts)
         object.__setattr__(self, "text_commitments", text_commitments)
+        object.__setattr__(self, "descriptor_contexts", contexts)
 
     @property
     def motion_count(self) -> int:
@@ -327,6 +372,7 @@ class TrainingInitializationBinding:
     qualified_base_selection_sha256: str | None = None
     residual_capacity_audit_sha256: str | None = None
     schema: str = "phaseset-training-initialization-binding-v1"
+    periodic_descriptor_capture_plan_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if self.stage not in ("base", "residual"):
@@ -375,7 +421,22 @@ class TrainingInitializationBinding:
                 self.qualified_base_selection_sha256,
                 "qualified_base_selection_sha256",
             )
-        if self.schema != "phaseset-training-initialization-binding-v1":
+        plan_sha256 = self.periodic_descriptor_capture_plan_sha256
+        if plan_sha256 is not None:
+            if self.stage != "residual":
+                raise TrainingRuntimeError(
+                    "base initialization cannot bind a periodic descriptor capture plan"
+                )
+            _lower_sha256(
+                plan_sha256,
+                "periodic_descriptor_capture_plan_sha256",
+            )
+        expected_schema = (
+            CACHED_INITIALIZATION_SCHEMA
+            if plan_sha256 is not None
+            else "phaseset-training-initialization-binding-v1"
+        )
+        if self.schema != expected_schema:
             raise TrainingRuntimeError("initialization binding schema changed")
 
     def canonical_bytes(self) -> bytes:
@@ -394,6 +455,10 @@ class TrainingInitializationBinding:
             "stage": self.stage,
             "system_id": self.system_id,
         }
+        if self.periodic_descriptor_capture_plan_sha256 is not None:
+            value["periodic_descriptor_capture_plan_sha256"] = (
+                self.periodic_descriptor_capture_plan_sha256
+            )
         return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
 
     @property
@@ -441,9 +506,7 @@ class QualifiedFrozenBase:
             _lower_sha256(getattr(self, name), name)
         if any(parameter.requires_grad for parameter in self.group_base.parameters()):
             raise TrainingRuntimeError("qualified frozen base parameters must be frozen")
-        if type(self.frozen_logit_scale) is not float or not math.isfinite(
-            self.frozen_logit_scale
-        ):
+        if type(self.frozen_logit_scale) is not float or not math.isfinite(self.frozen_logit_scale):
             raise TrainingRuntimeError("qualified frozen base logit scale must be finite float")
         if (
             _frozen_base_score_state_sha256(
@@ -535,9 +598,7 @@ class ResidualRetrievalSystem(nn.Module):
             raise TypeError("retrieval_head must be PhaseSetRetrievalHead")
         if type(embedding_dim) is not int or embedding_dim < 2:
             raise TypeError("embedding_dim must be an exact int >=2")
-        if type(frozen_base_logit_scale) is not float or not math.isfinite(
-            frozen_base_logit_scale
-        ):
+        if type(frozen_base_logit_scale) is not float or not math.isfinite(frozen_base_logit_scale):
             raise TypeError("frozen_base_logit_scale must be a finite exact float")
         self.frozen_base = frozen_base
         self.periodic_encoder = periodic_encoder
@@ -572,13 +633,54 @@ class ResidualRetrievalSystem(nn.Module):
         self.frozen_base.eval()
         return self
 
-    def encode_trainable(self, groups: PreparedGroupBatch) -> tuple[Tensor, Tensor]:
-        output = self.periodic_encoder(groups)
+    def _validated_trainable_output(
+        self,
+        output: object,
+    ) -> tuple[Tensor, Tensor]:
+        """Apply the unchanged residual-token checks to either explicit path."""
+
         if type(output) is not GroupTokenOutput:
             raise TrainingRuntimeError("residual encoder must return exact GroupTokenOutput")
         if output.tokens.ndim != 3 or output.tokens.shape[-1] != self.embedding_dim:
             raise TrainingRuntimeError("residual token width differs from training system")
         return output.tokens.float().contiguous(), output.band_mask.contiguous()
+
+    def encode_trainable(self, groups: PreparedGroupBatch) -> tuple[Tensor, Tensor]:
+        return self._validated_trainable_output(self.periodic_encoder(groups))
+
+    def encode_trainable_cached(
+        self,
+        groups: PreparedGroupBatch,
+        descriptor_stream: CachedPairChunkStream,
+    ) -> tuple[Tensor, Tensor]:
+        """Encode only from one explicit verified descriptor stream.
+
+        The cache remains a substitute for the fixed periodic descriptors only.
+        Frozen-base outputs and learned residual outputs are never cached here.
+        """
+
+        from .controls import PhaseSetSystem, _ControlledPhaseSetEncoder
+
+        if self.system_id not in ("02", "03", "04", "06", "07", "08"):
+            raise TrainingRuntimeError(
+                "this registered residual system does not admit cached descriptors"
+            )
+        periodic = self.periodic_encoder
+        if (
+            type(periodic) is not PhaseSetSystem
+            or periodic.system_id != self.system_id
+            or type(periodic.encoder) is not _ControlledPhaseSetEncoder
+        ):
+            raise TrainingRuntimeError(
+                "cached residual encoding requires the exact registered PhaseSet encoder"
+            )
+        if type(descriptor_stream) is not CachedPairChunkStream:
+            raise TypeError("descriptor_stream must be exact CachedPairChunkStream")
+        output = periodic.forward_cached(
+            groups,
+            descriptor_stream=descriptor_stream,
+        )
+        return self._validated_trainable_output(output)
 
     def encode_frozen_base(self, groups: PreparedGroupBatch) -> Tensor:
         with torch.no_grad():
@@ -599,16 +701,21 @@ class ResidualRetrievalSystem(nn.Module):
     ) -> Tensor:
         _validate_embedding_pair(base_embeddings, text_embeddings, self.embedding_dim)
         base_scores = (
-            torch.exp(
-                torch.clamp(
-                    self._frozen_base_logit_scale[0],
-                    min=0.0,
-                    max=math.log(100.0),
+            (
+                torch.exp(
+                    torch.clamp(
+                        self._frozen_base_logit_scale[0],
+                        min=0.0,
+                        max=math.log(100.0),
+                    )
                 )
+                * F.normalize(base_embeddings, dim=-1, eps=1e-12)
+                @ F.normalize(text_embeddings, dim=-1, eps=1e-12).T
             )
-            * F.normalize(base_embeddings, dim=-1, eps=1e-12)
-            @ F.normalize(text_embeddings, dim=-1, eps=1e-12).T
-        ).detach().float().contiguous()
+            .detach()
+            .float()
+            .contiguous()
+        )
         retrieval = self.retrieval_head(
             group_tokens.float().contiguous(),
             band_mask.contiguous(),
@@ -616,6 +723,71 @@ class ResidualRetrievalSystem(nn.Module):
             base_scores,
         )
         return retrieval.scores.contiguous()
+
+
+def _periodic_descriptor_capture_plan_identity(
+    descriptor_plan: object,
+    *,
+    system_id: str,
+    config: TrainingConfig,
+    energy_floors_sha256: str,
+) -> tuple[PeriodicDescriptorCaptureTrainingPlan, str]:
+    """Validate one sealed cache plan without opening a descriptor shard."""
+
+    from .periodic_capture_training_cache import (
+        PeriodicDescriptorCaptureTrainingPlan,
+    )
+
+    if type(descriptor_plan) is not PeriodicDescriptorCaptureTrainingPlan:
+        raise TypeError("descriptor_plan must be exact PeriodicDescriptorCaptureTrainingPlan")
+    if (
+        config.stage != "residual"
+        or config.synthetic_contract
+        or descriptor_plan.system_id != system_id
+        or descriptor_plan.seed != config.seed
+        or descriptor_plan.epochs != config.epochs
+        or descriptor_plan.config_sha256 != config.sha256
+        or descriptor_plan.edge_budget != config.edge_budget
+        or descriptor_plan.energy_floors_sha256 != energy_floors_sha256
+        or descriptor_plan.authority != 0
+        or descriptor_plan.production is not False
+        or descriptor_plan.result_claimed is not False
+    ):
+        raise TrainingRuntimeError(
+            "periodic descriptor capture plan differs from the residual runtime"
+        )
+    try:
+        digest = _lower_sha256(
+            descriptor_plan.sha256,
+            "periodic_descriptor_capture_plan_sha256",
+        )
+    except (TypeError, ValueError) as error:
+        raise TrainingRuntimeError(
+            "periodic descriptor capture plan digest is malformed"
+        ) from error
+    return descriptor_plan, digest
+
+
+def _residual_energy_floors_sha256(
+    system: ResidualRetrievalSystem,
+    config: TrainingConfig,
+) -> str:
+    """Read the exact registered residual floor identity without a forward."""
+
+    from .controls import PhaseSetSystem, _ControlledPhaseSetEncoder
+    from .periodic_descriptor_cache_v2 import energy_floors_sha256
+
+    periodic = system.periodic_encoder
+    if (
+        type(periodic) is not PhaseSetSystem
+        or periodic.system_id != system.system_id
+        or type(periodic.encoder) is not _ControlledPhaseSetEncoder
+        or periodic.encoder.edge_budget != config.edge_budget
+    ):
+        raise TrainingRuntimeError(
+            "cached residual runtime requires the exact registered PhaseSet encoder"
+        )
+    return energy_floors_sha256(periodic.encoder._energy_floors)
 
 
 def _capture_project_method_identities() -> tuple[tuple[type[object], str, object], ...]:
@@ -669,10 +841,11 @@ def _assert_registered_method_integrity(
 ) -> None:
     """Reject class monkeypatching and instance-level method shadowing."""
 
+    from .capture_validation import _verified_capture_validation_bindings
+
+    _verified_capture_validation_bindings()
     for name, expected in _FORMAL_RUNTIME_CONSTANTS.items():
-        if globals().get(name) != expected or type(globals().get(name)) is not type(
-            expected
-        ):
+        if globals().get(name) != expected or type(globals().get(name)) is not type(expected):
             raise TrainingRuntimeError(f"formal runtime constant changed: {name}")
     for name, expected in _FORMAL_TRAINING_FUNCTION_IDENTITIES:
         if globals().get(name) is not expected:
@@ -744,13 +917,16 @@ def _assert_registered_method_integrity(
 
 
 def _registered_spec_sha256(value: dict[str, object]) -> str:
-    raw = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("ascii") + b"\n"
+    raw = (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+        + b"\n"
+    )
     return _sha256(raw)
 
 
@@ -955,11 +1131,9 @@ def _validate_registered_formal_system(
         system.system_id not in RESIDUAL_SYSTEM_IDS
         or system.embedding_dim != REGISTERED_EMBEDDING_DIM
         or periodic.embedding_dim != REGISTERED_EMBEDDING_DIM
-        or periodic.encoder.half_edge_encoder[0].out_features
-        != REGISTERED_PERIODIC_HIDDEN_DIM
+        or periodic.encoder.half_edge_encoder[0].out_features != REGISTERED_PERIODIC_HIDDEN_DIM
         or periodic.encoder.edge_budget != config.edge_budget
-        or system.retrieval_head.text_band_mlp.embedding_dim
-        != REGISTERED_EMBEDDING_DIM
+        or system.retrieval_head.text_band_mlp.embedding_dim != REGISTERED_EMBEDDING_DIM
         or text_projection[0].out_features != REGISTERED_TEXT_HIDDEN_DIM
         or tuple(frozen_logit.shape) != (1,)
         or frozen_logit.dtype != torch.float32
@@ -1078,9 +1252,7 @@ def audit_residual_training_parameter_counts(
         if not isinstance(system, ResidualRetrievalSystem) or system.system_id != system_id:
             raise TrainingRuntimeError("residual capacity mapping identity mismatch")
         counts[system_id] = sum(
-            parameter.numel()
-            for parameter in system.parameters()
-            if parameter.requires_grad
+            parameter.numel() for parameter in system.parameters() if parameter.requires_grad
         )
     full = counts["08"]
     if full <= 0:
@@ -1159,13 +1331,9 @@ def _validate_registered_residual_capacity_audit(
             "expected capacity audit sha256",
         )
     except TypeError as error:
-        raise TrainingRuntimeError(
-            "expected capacity audit digest is malformed"
-        ) from error
+        raise TrainingRuntimeError("expected capacity audit digest is malformed") from error
     if value.sha256 != expected_capacity:
-        raise TrainingRuntimeError(
-            "capacity audit differs from the trusted expected digest"
-        )
+        raise TrainingRuntimeError("capacity audit differs from the trusted expected digest")
     _validate_qualified_frozen_base(
         qualified_base,
         expected_selection_sha256=expected_qualification_sha256,
@@ -1234,6 +1402,9 @@ class CheckpointArtifact:
     global_step: int
 
 
+CheckpointObserver = Callable[[CheckpointArtifact, Literal["update", "validation"]], None]
+
+
 @dataclass(frozen=True, slots=True)
 class TrainingReport:
     """Local runtime report; it intentionally cannot attest external execution."""
@@ -1270,6 +1441,26 @@ class TrainingReport:
     schema: str = REPORT_SCHEMA
 
 
+@dataclass(frozen=True, slots=True)
+class CachedResidualTrainingReport(TrainingReport):
+    """A residual report that binds one complete descriptor-cache plan."""
+
+    periodic_descriptor_capture_plan_sha256: str = ""
+    dataloader_state_sha256: str = ""
+    schema: str = CACHED_REPORT_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.stage != "residual":
+            raise TrainingRuntimeError("cached descriptor reports must be residual")
+        _lower_sha256(
+            self.periodic_descriptor_capture_plan_sha256,
+            "periodic_descriptor_capture_plan_sha256",
+        )
+        _lower_sha256(self.dataloader_state_sha256, "dataloader_state_sha256")
+        if self.schema != CACHED_REPORT_SCHEMA:
+            raise TrainingRuntimeError("cached descriptor report schema changed")
+
+
 @dataclass(slots=True)
 class _CursorState:
     epoch: int = 0
@@ -1294,7 +1485,40 @@ class _CacheRow:
     rng_before: dict[str, object]
 
 
-def _source_identity(source: object, split: Split) -> tuple[TrainingDataSource, str]:
+def _scoped_capture_validation_functions() -> tuple[object, object, object]:
+    """Return the exact capture callables after their module closes live drift."""
+
+    from .capture_validation import (
+        CaptureValidationSource,
+        _verified_capture_validation_bindings,
+        run_capture_validation,
+        run_capture_validation_cached,
+    )
+
+    checked_source, checked_uncached = _verified_capture_validation_bindings()
+    if (
+        checked_source is not CaptureValidationSource
+        or checked_uncached is not run_capture_validation
+    ):
+        raise TrainingRuntimeError("capture runtime binding verifier changed its ABI")
+    return CaptureValidationSource, run_capture_validation, run_capture_validation_cached
+
+
+def _source_identity(
+    source: object,
+    split: Split,
+) -> tuple[TrainingDataSource | CaptureValidationSource, str]:
+    # Lazy import avoids the capture evaluator's intentional system-interface
+    # dependency on this module. Only the concrete val-only source is admitted.
+    CaptureValidationSource, _, _ = _scoped_capture_validation_functions()
+
+    if type(source) is CaptureValidationSource:
+        if split != "val":
+            raise TrainingRuntimeError("capture validation cannot be a training source")
+        checked = CaptureValidationSource(source.split, source.manifest_sha256, source.captures)
+        # The census binds the complete window/feature/text plan AND upstream
+        # manifest, so resume cannot substitute a different capture gallery.
+        return checked, checked.census_sha256
     if not isinstance(source, TrainingDataSource):
         raise TypeError("data source must implement TrainingDataSource")
     if source.split != split:
@@ -1303,6 +1527,81 @@ def _source_identity(source: object, split: Split) -> tuple[TrainingDataSource, 
         raise TrainingRuntimeError(f"expected {split} data source")
     digest = _lower_sha256(source.manifest_sha256, f"{split} manifest_sha256")
     return source, digest
+
+
+def _descriptor_plan_sources(
+    plan: PeriodicDescriptorCaptureTrainingPlan,
+    train_source: object,
+    val_source: object,
+) -> tuple[TrainingDataSource, CaptureValidationSource]:
+    """Bind the complete prepared-train and holistic-capture inputs pre-forward."""
+
+    from .prepared_data_v2 import PreparedTrainingDataSourceV2
+
+    CaptureValidationSource, _, _ = _scoped_capture_validation_functions()
+
+    if type(train_source) is not PreparedTrainingDataSourceV2:
+        raise TypeError("cached descriptor training requires exact PreparedTrainingDataSourceV2")
+    if (
+        train_source.split != "train"
+        or train_source.manifest_sha256 != plan.train_source_manifest_sha256
+    ):
+        raise TrainingRuntimeError(
+            "cached descriptor training source differs from the admitted plan"
+        )
+    if type(val_source) is not CaptureValidationSource:
+        raise TypeError("cached descriptor training requires exact CaptureValidationSource")
+    checked = plan.validate_capture_validation_source(val_source)
+    if (
+        checked.split != "val"
+        or checked.manifest_sha256 != plan.capture_source_manifest_sha256
+        or checked.census_sha256 != plan.capture_source_census_sha256
+    ):
+        raise TrainingRuntimeError(
+            "cached capture validation source differs from the admitted plan"
+        )
+    return train_source, checked
+
+
+def _cached_dataloader_state_sha256(
+    train_manifest_sha256: str,
+    val_manifest_sha256: str,
+    descriptor_plan_sha256: str,
+) -> str:
+    value = {
+        "periodic_descriptor_capture_plan_sha256": _lower_sha256(
+            descriptor_plan_sha256,
+            "periodic_descriptor_capture_plan_sha256",
+        ),
+        "schema": "phaseset-training-dataloader-state-v2-cached-descriptor-plan",
+        "train_manifest_sha256": _lower_sha256(
+            train_manifest_sha256,
+            "train_manifest_sha256",
+        ),
+        "val_manifest_sha256": _lower_sha256(
+            val_manifest_sha256,
+            "val_manifest_sha256",
+        ),
+    }
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
+    return _sha256(raw)
+
+
+def _runtime_descriptor_plan_identity(
+    descriptor_plan: object | None,
+    system: BaseRetrievalSystem | ResidualRetrievalSystem,
+    config: TrainingConfig,
+) -> tuple[PeriodicDescriptorCaptureTrainingPlan | None, str | None]:
+    if descriptor_plan is None:
+        return None, None
+    if not isinstance(system, ResidualRetrievalSystem):
+        raise TrainingRuntimeError("base runtime cannot use a periodic descriptor capture plan")
+    return _periodic_descriptor_capture_plan_identity(
+        descriptor_plan,
+        system_id=system.system_id,
+        config=config,
+        energy_floors_sha256=_residual_energy_floors_sha256(system, config),
+    )
 
 
 def _materialize_epoch(
@@ -1402,8 +1701,7 @@ def _capture_macro_bidirectional_r1(
         row = logits[motion_index]
         maximum = torch.max(row)
         tied = tuple(
-            int(index)
-            for index in torch.nonzero(row == maximum, as_tuple=False).flatten().tolist()
+            int(index) for index in torch.nonzero(row == maximum, as_tuple=False).flatten().tolist()
         )
         chosen = min(tied, key=lambda index: text_commitments[index])
         motion_hits.append(int(bool(positive[motion_index, chosen].item())))
@@ -1434,9 +1732,7 @@ def _capture_macro_bidirectional_r1(
             len(text_indices),
         )
         capture_values.append((motion_value + text_value) / 2)
-    return float(
-        sum(capture_values, start=Fraction(0, 1)) / len(capture_values)
-    )
+    return float(sum(capture_values, start=Fraction(0, 1)) / len(capture_values))
 
 
 def _capture_rng() -> dict[str, object]:
@@ -1476,7 +1772,9 @@ def _restore_rng(value: Mapping[str, object]) -> None:
         torch.set_rng_state(cpu_state.cpu())
         cuda_states = value["torch_cuda"]
         if torch.cuda.is_available():
-            if type(cuda_states) is not list or any(type(item) is not Tensor for item in cuda_states):
+            if type(cuda_states) is not list or any(
+                type(item) is not Tensor for item in cuda_states
+            ):
                 raise TypeError
             torch.cuda.set_rng_state_all([item.cpu() for item in cuda_states])
     except (KeyError, TypeError, ValueError, RuntimeError) as error:
@@ -1547,10 +1845,7 @@ def training_system_state_sha256(
         if not (
             optimizable_only
             and isinstance(system, ResidualRetrievalSystem)
-            and (
-                name.startswith("frozen_base.")
-                or name == "_frozen_base_logit_scale"
-            )
+            and (name.startswith("frozen_base.") or name == "_frozen_base_logit_scale")
         )
     }
     if not selected:
@@ -1681,9 +1976,10 @@ def training_system_behavior_sha256(
         "stage": "residual" if isinstance(system, ResidualRetrievalSystem) else "base",
         "system_id": system.system_id,
     }
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode(
-        "ascii"
-    ) + b"\n"
+    raw = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        + b"\n"
+    )
     return _sha256(raw)
 
 
@@ -1723,6 +2019,7 @@ def _construct_seed_bound_system(
     frozen_base_checkpoint_sha256: str | None = None,
     qualified_base_selection_sha256: str | None = None,
     residual_capacity_audit: ResidualCapacityAudit | None = None,
+    periodic_descriptor_capture_plan_sha256: str | None = None,
 ) -> tuple[
     BaseRetrievalSystem | ResidualRetrievalSystem,
     TrainingInitializationBinding,
@@ -1752,6 +2049,14 @@ def _construct_seed_bound_system(
             raise TrainingRuntimeError(
                 "formal residual construction requires an all-system capacity audit"
             )
+        checked_plan_sha256 = (
+            _lower_sha256(
+                periodic_descriptor_capture_plan_sha256,
+                "periodic_descriptor_capture_plan_sha256",
+            )
+            if periodic_descriptor_capture_plan_sha256 is not None
+            else None
+        )
     else:
         if frozen_base_checkpoint_sha256 is not None:
             raise TrainingRuntimeError("base construction cannot bind a frozen checkpoint")
@@ -1761,6 +2066,11 @@ def _construct_seed_bound_system(
             raise TrainingRuntimeError("base construction cannot bind a base selection receipt")
         if residual_capacity_audit is not None:
             raise TrainingRuntimeError("base construction cannot bind a residual capacity audit")
+        if periodic_descriptor_capture_plan_sha256 is not None:
+            raise TrainingRuntimeError(
+                "base construction cannot bind a periodic descriptor capture plan"
+            )
+        checked_plan_sha256 = None
 
     ambient_rng = _capture_rng()
     try:
@@ -1811,6 +2121,12 @@ def _construct_seed_bound_system(
         qualified_base_selection_sha256=checked_selection,
         residual_capacity_audit_sha256=(
             residual_capacity_audit.sha256 if residual_capacity_audit is not None else None
+        ),
+        periodic_descriptor_capture_plan_sha256=checked_plan_sha256,
+        schema=(
+            CACHED_INITIALIZATION_SCHEMA
+            if checked_plan_sha256 is not None
+            else "phaseset-training-initialization-binding-v1"
         ),
     )
     return system, binding
@@ -1892,24 +2208,19 @@ def _backend_flag_targets() -> tuple[tuple[object, str, bool], ...]:
         (torch.backends.cudnn, "deterministic", True),
     )
     return tuple(
-        (owner, name, expected)
-        for owner, name, expected in candidates
-        if hasattr(owner, name)
+        (owner, name, expected) for owner, name, expected in candidates if hasattr(owner, name)
     )
 
 
 def _capture_numerical_runtime_flags() -> dict[str, object]:
     flags: dict[str, object] = {
         "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
-        "deterministic_warn_only": (
-            torch.is_deterministic_algorithms_warn_only_enabled()
-        ),
+        "deterministic_warn_only": (torch.is_deterministic_algorithms_warn_only_enabled()),
         "float32_matmul_precision": torch.get_float32_matmul_precision(),
+        "mha_fastpath_enabled": bool(torch.backends.mha.get_fastpath_enabled()),
     }
     for owner, name, _expected in _backend_flag_targets():
-        owner_name = (
-            "cuda.matmul" if owner is torch.backends.cuda.matmul else "cudnn"
-        )
+        owner_name = "cuda.matmul" if owner is torch.backends.cuda.matmul else "cudnn"
         flags[f"{owner_name}.{name}"] = bool(getattr(owner, name))
     return flags
 
@@ -1917,21 +2228,23 @@ def _capture_numerical_runtime_flags() -> dict[str, object]:
 def _install_frozen_numerical_runtime() -> None:
     torch.use_deterministic_algorithms(True, warn_only=False)
     torch.set_float32_matmul_precision("highest")
+    torch.backends.mha.set_fastpath_enabled(False)
     for owner, name, expected in _backend_flag_targets():
         setattr(owner, name, expected)
 
 
 def _restore_numerical_runtime_flags(flags: Mapping[str, object]) -> None:
     for owner, name, _expected in _backend_flag_targets():
-        owner_name = (
-            "cuda.matmul" if owner is torch.backends.cuda.matmul else "cudnn"
-        )
+        owner_name = "cuda.matmul" if owner is torch.backends.cuda.matmul else "cudnn"
         value = flags.get(f"{owner_name}.{name}")
         if type(value) is bool:
             setattr(owner, name, value)
     precision = flags.get("float32_matmul_precision")
     if type(precision) is str:
         torch.set_float32_matmul_precision(precision)
+    mha_fastpath = flags.get("mha_fastpath_enabled")
+    if type(mha_fastpath) is bool:
+        torch.backends.mha.set_fastpath_enabled(mha_fastpath)
     deterministic = flags.get("deterministic_algorithms")
     warn_only = flags.get("deterministic_warn_only")
     if type(deterministic) is bool and type(warn_only) is bool:
@@ -1944,11 +2257,10 @@ def _assert_frozen_numerical_runtime(device: torch.device) -> None:
         "deterministic_algorithms": True,
         "deterministic_warn_only": False,
         "float32_matmul_precision": "highest",
+        "mha_fastpath_enabled": False,
     }
     for owner, name, value in _backend_flag_targets():
-        owner_name = (
-            "cuda.matmul" if owner is torch.backends.cuda.matmul else "cudnn"
-        )
+        owner_name = "cuda.matmul" if owner is torch.backends.cuda.matmul else "cudnn"
         expected[f"{owner_name}.{name}"] = value
     if observed != expected:
         raise TrainingRuntimeError("frozen numerical runtime flags changed")
@@ -1997,6 +2309,7 @@ def training_environment_sha256() -> str:
         "deterministic_algorithms": True,
         "deterministic_warn_only": False,
         "float32_matmul_precision": "highest",
+        "mha_fastpath_enabled": False,
         "backend_flags": {
             (
                 f"{'cuda.matmul' if owner is torch.backends.cuda.matmul else 'cudnn'}.{name}"
@@ -2054,6 +2367,7 @@ def construct_registered_residual_seed_bound_system(
     residual_capacity_audit: ResidualCapacityAudit,
     expected_qualification_sha256: str,
     expected_capacity_audit_sha256: str,
+    descriptor_plan: PeriodicDescriptorCaptureTrainingPlan | None = None,
 ) -> tuple[ResidualRetrievalSystem, TrainingInitializationBinding]:
     """Construct one formal 01--08 residual exclusively from the closed registry."""
 
@@ -2065,6 +2379,18 @@ def construct_registered_residual_seed_bound_system(
         raise TypeError("qualified_base must be exact QualifiedFrozenBase")
     if qualified_base.seed != config.seed:
         raise TrainingRuntimeError("qualified base seed differs from residual seed")
+    checked_plan_sha256: str | None = None
+    if descriptor_plan is not None:
+        from .periodic import validate_energy_floors
+        from .periodic_descriptor_cache_v2 import energy_floors_sha256
+
+        checked_floors = validate_energy_floors(energy_floors)
+        _, checked_plan_sha256 = _periodic_descriptor_capture_plan_identity(
+            descriptor_plan,
+            system_id=system_id,
+            config=config,
+            energy_floors_sha256=energy_floors_sha256(checked_floors),
+        )
     _validate_registered_residual_capacity_audit(
         residual_capacity_audit,
         qualified_base,
@@ -2091,14 +2417,11 @@ def construct_registered_residual_seed_bound_system(
         and residual_capacity_audit.energy_floors_sha256 == floor_sha
         and residual_capacity_audit.frozen_base_checkpoint_sha256
         == qualified_base.checkpoint_sha256
-        and residual_capacity_audit.frozen_base_state_sha256
-        == qualified_base.frozen_state_sha256
+        and residual_capacity_audit.frozen_base_state_sha256 == qualified_base.frozen_state_sha256
         and residual_capacity_audit.qualified_base_selection_sha256
         == qualified_base.selection_receipt_sha256
-        and residual_capacity_audit.code_artifact_sha256
-        == training_code_artifact_sha256()
-        and residual_capacity_audit.environment_sha256
-        == training_environment_sha256()
+        and residual_capacity_audit.code_artifact_sha256 == training_code_artifact_sha256()
+        and residual_capacity_audit.environment_sha256 == training_environment_sha256()
     )
     if not expected_context:
         raise TrainingRuntimeError("residual capacity audit context mismatch")
@@ -2116,12 +2439,11 @@ def construct_registered_residual_seed_bound_system(
         frozen_base_checkpoint_sha256=qualified_base.checkpoint_sha256,
         qualified_base_selection_sha256=qualified_base.selection_receipt_sha256,
         residual_capacity_audit=residual_capacity_audit,
+        periodic_descriptor_capture_plan_sha256=checked_plan_sha256,
     )
     if not isinstance(system, ResidualRetrievalSystem):
         raise AssertionError("closed residual registry returned the wrong type")
-    if residual_capacity_audit.behavior_for(system_id) != training_system_behavior_sha256(
-        system
-    ):
+    if residual_capacity_audit.behavior_for(system_id) != training_system_behavior_sha256(system):
         raise TrainingRuntimeError("residual behavior differs from the capacity cohort")
     return system, binding
 
@@ -2145,9 +2467,7 @@ def _atomic_torch_save(path: Path, payload: dict[str, object]) -> CheckpointArti
             # cannot overwrite a checkpoint won by a concurrent writer.
             os.link(temporary, path, follow_symlinks=False)
         except FileExistsError as error:
-            raise TrainingCheckpointError(
-                "immutable checkpoint target already exists"
-            ) from error
+            raise TrainingCheckpointError("immutable checkpoint target already exists") from error
         except OSError as error:
             if path.exists() or path.is_symlink():
                 raise TrainingCheckpointError(
@@ -2228,9 +2548,7 @@ def _validate_qualified_frozen_base(
                 "expected base selection sha256",
             )
         except TypeError as error:
-            raise TrainingCheckpointError(
-                "expected base selection digest is malformed"
-            ) from error
+            raise TrainingCheckpointError("expected base selection digest is malformed") from error
         if selection != trusted_selection:
             raise TrainingCheckpointError(
                 "qualified base differs from the trusted selection digest"
@@ -2260,9 +2578,8 @@ def _validate_qualified_frozen_base(
     payload_state_digest = payload.get("state_digest")
     payload_without_digest = dict(payload)
     payload_without_digest.pop("state_digest", None)
-    if (
-        type(payload_state_digest) is not str
-        or payload_state_digest != _stable_hash(payload_without_digest)
+    if type(payload_state_digest) is not str or payload_state_digest != _stable_hash(
+        payload_without_digest
     ):
         raise TrainingCheckpointError("qualified base checkpoint state digest mismatch")
     updates_per_epoch = _checkpoint_exact_int(
@@ -2311,9 +2628,7 @@ def _validate_qualified_frozen_base(
     }
     for name, expected in expected_payload.items():
         if payload.get(name) != expected:
-            raise TrainingCheckpointError(
-                f"qualified base checkpoint {name} evidence mismatch"
-            )
+            raise TrainingCheckpointError(f"qualified base checkpoint {name} evidence mismatch")
     if value.code_artifact_sha256 != current_code:
         raise TrainingCheckpointError("qualified base code artifact changed")
     if value.environment_sha256 != current_environment:
@@ -2350,12 +2665,8 @@ def _validate_qualified_frozen_base(
             "system_id": expected_system_id,
         }
     )
-    if training_system_behavior_sha256(behavior_system) != payload.get(
-        "behavior_sha256"
-    ):
-        raise TrainingCheckpointError(
-            "qualified base behavior differs from checkpoint evidence"
-        )
+    if training_system_behavior_sha256(behavior_system) != payload.get("behavior_sha256"):
+        raise TrainingCheckpointError("qualified base behavior differs from checkpoint evidence")
     expected_frozen_state = _frozen_base_score_state_sha256(
         value.group_base,
         value.frozen_logit_scale,
@@ -2393,9 +2704,7 @@ def load_qualified_frozen_base(
     system_id = qualification.winner_system_id
     if system_id not in REGISTERED_BASE_SYSTEM_IDS:
         raise TrainingCheckpointError("qualified base winner is outside the census")
-    expected_checkpoint = qualification.winner_checkpoint_sha256s[
-        OFFICIAL_SEEDS.index(seed)
-    ]
+    expected_checkpoint = qualification.winner_checkpoint_sha256s[OFFICIAL_SEEDS.index(seed)]
     payload, artifact = _load_torch_checkpoint(
         Path(checkpoint_path),
         expected_sha256=expected_checkpoint,
@@ -2716,9 +3025,7 @@ def _validate_restored_optimizer_scheduler(
                 "checkpoint AdamW parameter state is incomplete or malformed"
             )
         if _optimizer_step_value(record["step"]) != global_step:
-            raise TrainingCheckpointError(
-                "checkpoint optimizer step disagrees with global_step"
-            )
+            raise TrainingCheckpointError("checkpoint optimizer step disagrees with global_step")
         for name in ("exp_avg", "exp_avg_sq"):
             moment = record[name]
             if (
@@ -2728,9 +3035,7 @@ def _validate_restored_optimizer_scheduler(
                 or moment.dtype != parameter.dtype
                 or not bool(torch.isfinite(moment).all().item())
             ):
-                raise TrainingCheckpointError(
-                    f"checkpoint AdamW {name} tensor is malformed"
-                )
+                raise TrainingCheckpointError(f"checkpoint AdamW {name} tensor is malformed")
         if bool((record["exp_avg_sq"] < 0).any().item()):  # type: ignore[operator]
             raise TrainingCheckpointError("checkpoint AdamW exp_avg_sq is negative")
 
@@ -2760,7 +3065,9 @@ _FORMAL_TRAINING_FUNCTION_IDENTITIES = (
     ("_capture_numerical_runtime_flags", _capture_numerical_runtime_flags),
     ("_capture_rng", _capture_rng),
     ("_capture_macro_bidirectional_r1", _capture_macro_bidirectional_r1),
+    ("_cached_dataloader_state_sha256", _cached_dataloader_state_sha256),
     ("_cuda_environment_inventory", _cuda_environment_inventory),
+    ("_descriptor_plan_sources", _descriptor_plan_sources),
     ("_frozen_numerical_runtime", _frozen_numerical_runtime),
     ("_group_effective_batches", _group_effective_batches),
     ("_install_frozen_numerical_runtime", _install_frozen_numerical_runtime),
@@ -2768,8 +3075,15 @@ _FORMAL_TRAINING_FUNCTION_IDENTITIES = (
     ("_load_torch_checkpoint", _load_torch_checkpoint),
     ("_materialize_epoch", _materialize_epoch),
     ("_positive_mask", _positive_mask),
+    (
+        "_periodic_descriptor_capture_plan_identity",
+        _periodic_descriptor_capture_plan_identity,
+    ),
+    ("_residual_energy_floors_sha256", _residual_energy_floors_sha256),
     ("_restore_numerical_runtime_flags", _restore_numerical_runtime_flags),
     ("_restore_rng", _restore_rng),
+    ("_runtime_descriptor_plan_identity", _runtime_descriptor_plan_identity),
+    ("_scoped_capture_validation_functions", _scoped_capture_validation_functions),
     (
         "_rebuild_registered_residual_capacity_audit",
         _rebuild_registered_residual_capacity_audit,
@@ -2816,6 +3130,8 @@ class PhaseSetTrainingRuntime:
         checkpoint_directory: str | Path,
         *,
         initialization_binding: TrainingInitializationBinding | None = None,
+        checkpoint_observer: CheckpointObserver | None = None,
+        descriptor_plan: PeriodicDescriptorCaptureTrainingPlan | None = None,
     ) -> None:
         if type(config) is not TrainingConfig:
             raise TypeError("config must be exact TrainingConfig")
@@ -2827,10 +3143,24 @@ class PhaseSetTrainingRuntime:
             TrainingInitializationBinding
         ):
             raise TypeError("initialization_binding must be exact TrainingInitializationBinding")
+        if checkpoint_observer is not None and not callable(checkpoint_observer):
+            raise TypeError("checkpoint_observer must be callable or None")
         if not config.synthetic_contract and initialization_binding is None:
             raise TrainingRuntimeError(
                 "formal training requires a seed-bound initialization binding"
             )
+        checked_plan, checked_plan_sha256 = _runtime_descriptor_plan_identity(
+            descriptor_plan,
+            system,
+            config,
+        )
+        binding_plan_sha256 = (
+            initialization_binding.periodic_descriptor_capture_plan_sha256
+            if initialization_binding is not None
+            else None
+        )
+        if binding_plan_sha256 != checked_plan_sha256:
+            raise TrainingRuntimeError("initialization binding and descriptor plan identity differ")
         if not config.synthetic_contract:
             _validate_registered_formal_system(system, config)
         actual_initial_state = training_system_state_sha256(
@@ -2843,13 +3173,10 @@ class PhaseSetTrainingRuntime:
                 initialization_binding.stage != config.stage
                 or initialization_binding.seed != config.seed
                 or initialization_binding.system_id != system.system_id
-                or initialization_binding.initial_optimizable_state_sha256
-                != actual_initial_state
+                or initialization_binding.initial_optimizable_state_sha256 != actual_initial_state
                 or initialization_binding.behavior_sha256 != actual_behavior
-                or initialization_binding.code_artifact_sha256
-                != training_code_artifact_sha256()
-                or initialization_binding.environment_sha256
-                != training_environment_sha256()
+                or initialization_binding.code_artifact_sha256 != training_code_artifact_sha256()
+                or initialization_binding.environment_sha256 != training_environment_sha256()
             ):
                 raise TrainingRuntimeError(
                     "initialization binding does not match the live training system"
@@ -2876,12 +3203,15 @@ class PhaseSetTrainingRuntime:
         self.system = system
         self.config = config
         self.initialization_binding = initialization_binding
+        self.descriptor_plan = checked_plan
+        self.periodic_descriptor_capture_plan_sha256 = checked_plan_sha256
         self.initial_optimizable_state_sha256 = actual_initial_state
         self.behavior_sha256 = actual_behavior
         self.device = torch.device(config.device)
         self.system.to(self.device)
         self.precision = resolve_precision(config)
         self.checkpoint_directory = root.resolve()
+        self.checkpoint_observer = checkpoint_observer
         self._optimizer: torch.optim.AdamW | None = None
         self._scheduler: torch.optim.lr_scheduler.LambdaLR | None = None
         self._state = _CursorState()
@@ -2892,7 +3222,26 @@ class PhaseSetTrainingRuntime:
         self._total_steps = 0
         self._numeric_runtime_active = False
 
+    def _assert_live_descriptor_plan(self) -> None:
+        plan, digest = _runtime_descriptor_plan_identity(
+            self.descriptor_plan,
+            self.system,
+            self.config,
+        )
+        binding_digest = (
+            self.initialization_binding.periodic_descriptor_capture_plan_sha256
+            if self.initialization_binding is not None
+            else None
+        )
+        if (
+            plan is not self.descriptor_plan
+            or digest != self.periodic_descriptor_capture_plan_sha256
+            or binding_digest != digest
+        ):
+            raise TrainingRuntimeError("live periodic descriptor capture plan changed")
+
     def _assert_live_formal_binding(self, *, require_initial_state: bool) -> None:
+        self._assert_live_descriptor_plan()
         if self.config.synthetic_contract:
             return
         if self._numeric_runtime_active:
@@ -2907,10 +3256,14 @@ class PhaseSetTrainingRuntime:
             raise TrainingRuntimeError("training environment changed")
         if training_system_behavior_sha256(self.system) != binding.behavior_sha256:
             raise TrainingRuntimeError("live formal behavior diverged from initialization binding")
-        if require_initial_state and training_system_state_sha256(
-            self.system,
-            optimizable_only=True,
-        ) != binding.initial_optimizable_state_sha256:
+        if (
+            require_initial_state
+            and training_system_state_sha256(
+                self.system,
+                optimizable_only=True,
+            )
+            != binding.initial_optimizable_state_sha256
+        ):
             raise TrainingRuntimeError("live formal state diverged before optimizer creation")
         if isinstance(self.system, ResidualRetrievalSystem):
             frozen_state = _frozen_base_score_state_sha256(
@@ -2918,12 +3271,12 @@ class PhaseSetTrainingRuntime:
                 float(self.system._frozen_base_logit_scale.detach().cpu().item()),
             )
             if frozen_state != binding.frozen_base_state_sha256:
-                raise TrainingRuntimeError(
-                    "live frozen base diverged from initialization binding"
-                )
+                raise TrainingRuntimeError("live frozen base diverged from initialization binding")
 
     def _trainable_parameters(self) -> list[nn.Parameter]:
-        parameters = [parameter for parameter in self.system.parameters() if parameter.requires_grad]
+        parameters = [
+            parameter for parameter in self.system.parameters() if parameter.requires_grad
+        ]
         if not parameters:
             raise TrainingRuntimeError("training system has no trainable parameters")
         return parameters
@@ -2967,7 +3320,9 @@ class PhaseSetTrainingRuntime:
     def _checkpoint_payload(self) -> dict[str, object]:
         state = self._state
         payload: dict[str, object] = {
-            "schema": CHECKPOINT_SCHEMA,
+            "schema": (
+                CACHED_CHECKPOINT_SCHEMA if self.descriptor_plan is not None else CHECKPOINT_SCHEMA
+            ),
             "authority": 0,
             "production": False,
             "result_claimed": False,
@@ -3039,6 +3394,15 @@ class PhaseSetTrainingRuntime:
             "scheduler": self._checked_scheduler.state_dict(),
             "rng": _capture_rng(),
         }
+        if self.periodic_descriptor_capture_plan_sha256 is not None:
+            payload["periodic_descriptor_capture_plan_sha256"] = (
+                self.periodic_descriptor_capture_plan_sha256
+            )
+            payload["dataloader_state_sha256"] = _cached_dataloader_state_sha256(
+                self._train_manifest,
+                self._val_manifest,
+                self.periodic_descriptor_capture_plan_sha256,
+            )
         payload["state_digest"] = _stable_hash(payload)
         return payload
 
@@ -3056,6 +3420,8 @@ class PhaseSetTrainingRuntime:
         self._latest = artifact
         if self._state.best_checkpoint_name == name:
             self._state.best_checkpoint_sha256 = artifact.sha256
+        if self.checkpoint_observer is not None:
+            self.checkpoint_observer(artifact, reason)
         return artifact
 
     def _restore_checkpoint(
@@ -3072,8 +3438,14 @@ class PhaseSetTrainingRuntime:
         if type(digest) is not str or digest != _stable_hash(payload):
             raise TrainingCheckpointError("checkpoint state digest mismatch")
         payload["state_digest"] = digest
+        if self.descriptor_plan is None and "periodic_descriptor_capture_plan_sha256" in payload:
+            raise TrainingCheckpointError(
+                "uncached runtime cannot resume a cached descriptor checkpoint"
+            )
         bindings = {
-            "schema": CHECKPOINT_SCHEMA,
+            "schema": (
+                CACHED_CHECKPOINT_SCHEMA if self.descriptor_plan is not None else CHECKPOINT_SCHEMA
+            ),
             "stage": self.config.stage,
             "seed": self.config.seed,
             "system_id": self.system.system_id,
@@ -3087,6 +3459,15 @@ class PhaseSetTrainingRuntime:
             "code_artifact_sha256": training_code_artifact_sha256(),
             "environment_sha256": training_environment_sha256(),
         }
+        if self.periodic_descriptor_capture_plan_sha256 is not None:
+            bindings["periodic_descriptor_capture_plan_sha256"] = (
+                self.periodic_descriptor_capture_plan_sha256
+            )
+            bindings["dataloader_state_sha256"] = _cached_dataloader_state_sha256(
+                self._train_manifest,
+                self._val_manifest,
+                self.periodic_descriptor_capture_plan_sha256,
+            )
         if self.initialization_binding is None:
             if any(
                 payload.get(key) is not None
@@ -3115,9 +3496,7 @@ class PhaseSetTrainingRuntime:
             bindings.update(
                 {
                     "initialization_binding_sha256": self.initialization_binding.sha256,
-                    "initial_optimizable_state_sha256": (
-                        self.initial_optimizable_state_sha256
-                    ),
+                    "initial_optimizable_state_sha256": (self.initial_optimizable_state_sha256),
                     "factory_sha256": self.initialization_binding.factory_sha256,
                     "code_artifact_sha256": self.initialization_binding.code_artifact_sha256,
                     "frozen_base_checkpoint_sha256": (
@@ -3174,6 +3553,19 @@ class PhaseSetTrainingRuntime:
         self._latest = artifact
         self._assert_live_formal_binding(require_initial_state=False)
 
+    def _encode_cached_training_batch(
+        self,
+        batch: RetrievalTrainingBatch,
+    ) -> tuple[Tensor, Tensor]:
+        if not isinstance(self.system, ResidualRetrievalSystem):
+            raise TrainingRuntimeError("cached descriptor plan requires a residual system")
+        self._assert_live_descriptor_plan()
+        plan = self.descriptor_plan
+        if plan is None:
+            raise TrainingRuntimeError("cached descriptor plan was lost")
+        stream = plan.open_training_batch(batch)
+        return self.system.encode_trainable_cached(batch.groups, stream)
+
     def _prepare_cache(
         self, microbatches: tuple[RetrievalTrainingBatch, ...]
     ) -> tuple[list[_CacheRow], Tensor, tuple[bytes, ...], tuple[bytes, ...]]:
@@ -3190,7 +3582,10 @@ class PhaseSetTrainingRuntime:
                     band_mask = None
                     base_embedding = None
                 else:
-                    primary, band_mask = self.system.encode_trainable(batch.groups)
+                    if self.descriptor_plan is None:
+                        primary, band_mask = self.system.encode_trainable(batch.groups)
+                    else:
+                        primary, band_mask = self._encode_cached_training_batch(batch)
                     base_embedding = self.system.encode_frozen_base(batch.groups)
             primary_leaf = primary.detach().float().contiguous().requires_grad_(True)
             rows.append(
@@ -3211,9 +3606,7 @@ class PhaseSetTrainingRuntime:
         primary = torch.cat([row.primary_leaf for row in rows]).contiguous()
         if isinstance(self.system, BaseRetrievalSystem):
             return self.system.scores(primary, text)
-        masks = torch.cat(
-            [row.band_mask for row in rows if row.band_mask is not None]
-        ).contiguous()
+        masks = torch.cat([row.band_mask for row in rows if row.band_mask is not None]).contiguous()
         bases = torch.cat(
             [row.base_embedding for row in rows if row.base_embedding is not None]
         ).contiguous()
@@ -3233,20 +3626,29 @@ class PhaseSetTrainingRuntime:
         # dropout-bearing head cannot repeat the same mask on the next update.
         rng_after = _capture_rng()
         loss.backward()
-        for row in rows:
-            gradient = row.primary_leaf.grad
-            if gradient is None:
-                raise TrainingRuntimeError("gradient cache did not receive representation gradients")
-            _restore_rng(row.rng_before)
-            with _autocast_context(self.precision, self.device):
-                if isinstance(self.system, BaseRetrievalSystem):
-                    replay = self.system.encode_trainable(row.batch.groups)
-                else:
-                    replay, replay_mask = self.system.encode_trainable(row.batch.groups)
-                    if row.band_mask is None or not torch.equal(replay_mask, row.band_mask):
-                        raise TrainingRuntimeError("residual replay changed its deterministic band mask")
-            torch.autograd.backward(replay, gradient)
-        _restore_rng(rng_after)
+        try:
+            for row in rows:
+                gradient = row.primary_leaf.grad
+                if gradient is None:
+                    raise TrainingRuntimeError(
+                        "gradient cache did not receive representation gradients"
+                    )
+                _restore_rng(row.rng_before)
+                with _autocast_context(self.precision, self.device):
+                    if isinstance(self.system, BaseRetrievalSystem):
+                        replay = self.system.encode_trainable(row.batch.groups)
+                    else:
+                        if self.descriptor_plan is None:
+                            replay, replay_mask = self.system.encode_trainable(row.batch.groups)
+                        else:
+                            replay, replay_mask = self._encode_cached_training_batch(row.batch)
+                        if row.band_mask is None or not torch.equal(replay_mask, row.band_mask):
+                            raise TrainingRuntimeError(
+                                "residual replay changed its deterministic band mask"
+                            )
+                torch.autograd.backward(replay, gradient)
+        finally:
+            _restore_rng(rng_after)
         gradient_norm = torch.nn.utils.clip_grad_norm_(
             self._trainable_parameters(),
             GRADIENT_CLIP_NORM,
@@ -3259,8 +3661,42 @@ class PhaseSetTrainingRuntime:
 
     def _validation(
         self,
-        source: TrainingDataSource,
+        source: TrainingDataSource | CaptureValidationSource,
     ) -> tuple[float, float, int, int]:
+        from .capture_validation import CaptureValidationSource, run_capture_validation
+
+        run_capture_validation_cached = None
+
+        if not self.config.synthetic_contract:
+            (
+                CaptureValidationSource,
+                run_capture_validation,
+                run_capture_validation_cached,
+            ) = _scoped_capture_validation_functions()
+        if type(source) is CaptureValidationSource:
+            checked = CaptureValidationSource(source.split, source.manifest_sha256, source.captures)
+            if checked.census_sha256 != self._val_manifest:
+                raise TrainingRuntimeError("capture validation census changed after fit admission")
+            edges = tuple(
+                window.groups.actor_counts[0] * (window.groups.actor_counts[0] - 1) // 2
+                for capture in checked.captures
+                for window in capture.windows
+            )
+            if self.descriptor_plan is None:
+                result = run_capture_validation(self.system, self.config, checked)
+            else:
+                self._assert_live_descriptor_plan()
+                if run_capture_validation_cached is None:
+                    raise TrainingRuntimeError("cached capture validation binding is unavailable")
+                result = run_capture_validation_cached(
+                    self.system,
+                    self.config,
+                    checked,
+                    self.descriptor_plan,
+                )
+            if result.source_census_sha256 != self._val_manifest:
+                raise TrainingRuntimeError("scored capture census differs from admitted validation")
+            return float(result.primary_capture_r1), result.loss, sum(edges), max(edges)
         batches = _materialize_epoch(
             source,
             split="val",
@@ -3339,7 +3775,7 @@ class PhaseSetTrainingRuntime:
             self._state.best_checkpoint_name,
             self._state.best_checkpoint_sha256,
         )
-        return TrainingReport(
+        report = TrainingReport(
             status=status,
             stage=self.config.stage,
             system_id=self.system.system_id,
@@ -3386,11 +3822,27 @@ class PhaseSetTrainingRuntime:
             val_manifest_sha256=self._val_manifest,
             last_train_loss=self._state.last_train_loss,
         )
+        if self.periodic_descriptor_capture_plan_sha256 is None:
+            return report
+        values = {
+            field.name: getattr(report, field.name)
+            for field in dataclass_fields(TrainingReport)
+            if field.name != "schema"
+        }
+        return CachedResidualTrainingReport(
+            **values,
+            periodic_descriptor_capture_plan_sha256=(self.periodic_descriptor_capture_plan_sha256),
+            dataloader_state_sha256=_cached_dataloader_state_sha256(
+                self._train_manifest,
+                self._val_manifest,
+                self.periodic_descriptor_capture_plan_sha256,
+            ),
+        )
 
     def fit(
         self,
         train_source: TrainingDataSource,
-        val_source: TrainingDataSource,
+        val_source: TrainingDataSource | CaptureValidationSource,
         *,
         resume_checkpoint: str | Path | None = None,
         resume_checkpoint_sha256: str | None = None,
@@ -3402,12 +3854,29 @@ class PhaseSetTrainingRuntime:
 
         Validation alone selects the best checkpoint.  There is intentionally
         no test-source argument, and any source or batch labelled ``test`` is
-        rejected before a model forward.
+        rejected before a model forward. A concrete CaptureValidationSource
+        uses the complete holistic capture gallery; the existing window source
+        remains available for the separately declared auxiliary task. Capture
+        checkpoints bind the complete source census rather than actor-set IDs.
         """
 
+        if self.descriptor_plan is not None:
+            self._assert_live_descriptor_plan()
+            train_source, val_source = _descriptor_plan_sources(
+                self.descriptor_plan,
+                train_source,
+                val_source,
+            )
         self._assert_live_formal_binding(require_initial_state=True)
         train, self._train_manifest = _source_identity(train_source, "train")
         val, self._val_manifest = _source_identity(val_source, "val")
+        if self.descriptor_plan is not None and (
+            self._train_manifest != self.descriptor_plan.train_source_manifest_sha256
+            or self._val_manifest != self.descriptor_plan.capture_source_census_sha256
+        ):
+            raise TrainingRuntimeError(
+                "runtime data identities differ from the cached descriptor plan"
+            )
         first_epoch = _materialize_epoch(
             train,
             split="train",
@@ -3420,8 +3889,7 @@ class PhaseSetTrainingRuntime:
             self.config.effective_global_batch,
         )
         if not self.config.synthetic_contract and any(
-            sum(batch.motion_count for batch in group)
-            != self.config.effective_global_batch
+            sum(batch.motion_count for batch in group) != self.config.effective_global_batch
             for group in first_groups
         ):
             raise TrainingRuntimeError(
@@ -3437,9 +3905,7 @@ class PhaseSetTrainingRuntime:
                     resume_record,
                 )
             ):
-                raise TrainingCheckpointError(
-                    "resume binding was provided without a checkpoint"
-                )
+                raise TrainingCheckpointError("resume binding was provided without a checkpoint")
             if any(self.checkpoint_directory.glob("checkpoint-*.pt")):
                 raise TrainingCheckpointError("new run requires an empty checkpoint directory")
             self._seed_new_run()
@@ -3451,11 +3917,9 @@ class PhaseSetTrainingRuntime:
                         "formal resume requires a verified attempt-ledger binding"
                     )
                 try:
-                    ledger_sha256 = (
-                        execution_module.verified_resume_checkpoint_payload_sha256(
+                    ledger_sha256 = execution_module.verified_resume_checkpoint_payload_sha256(
                         resume_attempt_root,
                         resume_record,
-                        )
                     )
                 except (ExecutionContractError, TypeError) as error:
                     raise TrainingCheckpointError(
@@ -3475,11 +3939,9 @@ class PhaseSetTrainingRuntime:
                 )
             elif resume_attempt_root is not None:
                 try:
-                    ledger_sha256 = (
-                        execution_module.verified_resume_checkpoint_payload_sha256(
+                    ledger_sha256 = execution_module.verified_resume_checkpoint_payload_sha256(
                         resume_attempt_root,
                         resume_record,
-                        )
                     )
                 except (ExecutionContractError, TypeError) as error:
                     raise TrainingCheckpointError(
@@ -3538,9 +4000,7 @@ class PhaseSetTrainingRuntime:
                             "formal sampler emitted a partial 128-window effective batch"
                         )
                     if self._state.update_index > len(groups):
-                        raise TrainingCheckpointError(
-                            "resumed update cursor exceeds epoch plan"
-                        )
+                        raise TrainingCheckpointError("resumed update cursor exceeds epoch plan")
                     for update_index in range(self._state.update_index, len(groups)):
                         microbatches = groups[update_index]
                         loss = self._train_update(microbatches)
@@ -3554,11 +4014,7 @@ class PhaseSetTrainingRuntime:
                             maximum,
                         )
                         self._state.last_train_loss = loss
-                        if (
-                            self._state.global_step
-                            % self.config.checkpoint_every_updates
-                            == 0
-                        ):
+                        if self._state.global_step % self.config.checkpoint_every_updates == 0:
                             self._write_checkpoint("update")
                         if (
                             stop_after_global_step is not None
@@ -3598,8 +4054,10 @@ __all__ = [
     "BASE_EPOCHS",
     "BASE_LEARNING_RATE",
     "BaseRetrievalSystem",
+    "CachedResidualTrainingReport",
     "CHECKPOINT_SCHEMA",
     "CheckpointArtifact",
+    "CheckpointObserver",
     "EFFECTIVE_GLOBAL_BATCH",
     "GRADIENT_CLIP_NORM",
     "OFFICIAL_SEEDS",

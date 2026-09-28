@@ -586,6 +586,7 @@ class ClipResolutionTests(unittest.TestCase):
         pins, total = tiny_snapshot(self.temporary.path)
         first_file = self.temporary.path / "pytorch_model.bin"
         original = first_file.read_bytes()
+        original_stat = first_file.stat()
         open_count = 0
         fd_ordinals: dict[int, int] = {}
         mutated = False
@@ -605,6 +606,13 @@ class ClipResolutionTests(unittest.TestCase):
                 replacement = bytes((original[0] ^ 1,)) + original[1:]
                 self.assertEqual(len(replacement), len(original))
                 first_file.write_bytes(replacement)
+                # Equal-length writes may share one filesystem timestamp tick.
+                # This test targets the closing METADATA sweep, so make that
+                # observable premise explicit instead of depending on elapsed
+                # wall time. The production scanner remains best-effort.
+                os.utime(first_file, ns=(original_stat.st_atime_ns,
+                                       original_stat.st_mtime_ns + 2_000_000_000))
+                self.assertNotEqual(first_file.stat().st_mtime_ns, original_stat.st_mtime_ns)
                 mutated = True
             return os.read(fd, count)
 
@@ -744,6 +752,9 @@ class ClipResolutionTests(unittest.TestCase):
             clip.canonical_assessment_bytes(assessment)
 
     def test_weak_lease_registry_returns_to_baseline_after_256_assessments(self) -> None:
+        # Earlier tests may leave unreachable exception/closure cycles. They
+        # must be collected before, not during, this relative-count assertion.
+        gc.collect()
         baseline = clip._issued_lease_count_for_tests()
         missing = self.temporary.path / "lease-missing"
         assessments = [clip.assess_local_clip_snapshot(missing) for _ in range(256)]

@@ -12,6 +12,12 @@ jobs:
   verify:
     name: Windows Python ${{ matrix.python }}
     runs-on: windows-latest
+    # Freeze native CPU pools before Torch/NumPy import, as in server witnesses.
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      PYTHONHASHSEED: "0"
     strategy:
       fail-fast: false
       matrix:
@@ -44,7 +50,9 @@ jobs:
       - name: Lint
         run: python -m ruff check src tests scripts
       - name: Test
-        run: python -B -m pytest -p no:cacheprovider -q ${{ matrix.pytest_args }}
+        run: |
+          python -B -c "import torch; print({'torch': torch.__version__, 'cpu_capability': torch.backends.cpu.get_cpu_capability(), 'num_threads': torch.get_num_threads(), 'num_interop_threads': torch.get_num_interop_threads(), 'mkldnn_available': torch.backends.mkldnn.is_available(), 'mkldnn_enabled': torch.backends.mkldnn.enabled}); assert torch.get_num_threads() == 1"
+          python -B -m pytest -p no:cacheprovider -q ${{ matrix.pytest_args }}
       - name: Build wheel
         run: python -m pip wheel --no-deps --wheel-dir dist .
       - name: Audit built wheel bytes

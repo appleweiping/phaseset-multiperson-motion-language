@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 import hashlib
 import math
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import numpy as np
 import torch
@@ -44,6 +44,9 @@ from .periodic import (
     validate_edge_chunk_size,
     validate_energy_floors,
 )
+
+if TYPE_CHECKING:
+    from .periodic_descriptor_cache_v2 import CachedPairChunkStream
 
 
 STATUS: Final = "DATA_FREE_EXECUTABLE_PHASESET_CONTROLS_NONPRODUCTION_AUTHORITY0"
@@ -507,6 +510,16 @@ class _ControlledPhaseSetEncoder(PhaseSetEncoder):
             )
         return super()._iter_pair_chunks(batch, edge_chunk_size=edge_chunk_size)
 
+    def _expected_descriptor_stream_kind(self) -> str | None:
+        policy = self.control_spec.feature_policy
+        if policy == "MARGINAL_POWER":
+            return "MARGINAL_POWER"
+        if policy == "MEAN_DIFFERENCE_DCT":
+            return "MEAN_DIFFERENCE_DCT"
+        if policy in ("FULL_RELATION", "SHUFFLED_INCIDENCE", "PHASE_STRIPPED"):
+            return "FULL_RELATION"
+        return None
+
     def _transform_edge_outputs(
         self,
         half_ij: Tensor,
@@ -588,6 +601,27 @@ class PhaseSetSystem(nn.Module):
         return self.forward_activity(
             skeleton_to_activity(checked),
             edge_chunk_size=edge_chunk_size,
+        )
+
+    def forward_cached(
+        self,
+        batch: PreparedGroupBatch,
+        *,
+        descriptor_stream: CachedPairChunkStream,
+        edge_chunk_size: int = DEFAULT_EDGE_CHUNK_SIZE,
+    ) -> GroupTokenOutput:
+        """Run an enabled system from its exact registered cached input family."""
+
+        checked = validate_prepared_group_batch(batch)
+        if self.encoder is None:
+            raise PhaseSetControlError(
+                "system 00 does not admit cached descriptor execution"
+            )
+        return self.encoder.forward_cached(
+            checked,
+            descriptor_stream=descriptor_stream,
+            edge_chunk_size=edge_chunk_size,
+            include_topology=self.spec.include_topology,
         )
 
     def forward_activity(

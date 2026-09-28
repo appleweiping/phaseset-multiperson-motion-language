@@ -1,0 +1,1156 @@
+{
+  "schema": "phaseset-v2-training-matrix-v1",
+  "amendment_date": "2026-09-26",
+  "status": "PLANNED_NOT_LAUNCHABLE",
+  "supersedes": "legacy_33_run_matrix",
+  "seeds": [
+    1729,
+    2718,
+    31415
+  ],
+  "budget": {
+    "gpu_hours": 300,
+    "formal_stages": 87,
+    "max_formal_starts": 90,
+    "max_pilot_stages": 12,
+    "max_architecture_revisions": 2,
+    "max_root_cause_restarts": 3,
+    "base_max_epochs": 30,
+    "residual_max_epochs": 20,
+    "pilot_hyperparameter_adjustments": 1,
+    "pilot_max_formal_step_fraction": 0.2,
+    "allowed_uniform_epoch_expansion": {"base": 60, "residual": 40},
+    "epoch_expansion_must_precede_formal_freeze": true
+  },
+  "primary_split": {
+    "train_released_episodes": 400,
+    "validation_released_episodes": 96,
+    "test_released_episodes": 76,
+    "effective_holistic_task_released_episodes": {"train": 398, "validation": 96, "test": 75},
+    "sealed_test_parent_captures": 40,
+    "sealed_test_official_human_rows": 200,
+    "final_test_components": 3,
+    "validation_component_labels": ["C00"],
+    "sealed_test_component_labels": ["C09", "C11", "C15"]
+  },
+  "pilot_and_group_fold_components": {
+    "pilot_train": ["C01", "C02"],
+    "pilot_validation": ["C03"],
+    "development": ["C00", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C10", "C12", "C13", "C14"],
+    "fold_validation": ["C03"],
+    "folds": [
+      {"id": "fold_0", "run_split": "group_fold_1", "held_out": ["C00", "C06", "C10", "C14"], "train": ["C01", "C02", "C04", "C05", "C07", "C08", "C12", "C13"]},
+      {"id": "fold_1", "run_split": "group_fold_2", "held_out": ["C04", "C07", "C12"], "train": ["C00", "C01", "C02", "C05", "C06", "C08", "C10", "C13", "C14"]},
+      {"id": "fold_2", "run_split": "group_fold_3", "held_out": ["C05", "C08", "C13"], "train": ["C00", "C01", "C02", "C04", "C06", "C07", "C10", "C12", "C14"]}
+    ],
+    "reuse_main_checkpoints": false
+  },
+  "group_fold_components_source": "User-supplied PhaseSet_Codex_Handoff_2026-09-26.md, section 5.2",
+  "pilot_allocation": {"TMR-Set": 3, "WaMo-Set": 3, "MIME-Set": 3, "B2": 1, "PhaseSet-V2-head": 2},
+  "mechanism_contract": {
+    "residual_base": "B2",
+    "temporal_layers": 2,
+    "width": 512,
+    "local_statistics_frames": 40,
+    "hop_frames": 20,
+    "initial_relation_mixture": 0.1,
+    "relation_language_readout": "0.5 * ordered_capture_cosine + 0.5 * max_whole_directed_packet_cosine",
+    "relation_language_edge_block": 64,
+    "coordination_text_adapter": "shared_512_GELU_512_on_frozen_CLIP",
+    "human_holistic_caption_field": "all_scene_explained_rows_no_questionnaire_fusion",
+    "retrieval_positive_identity": "admitted_parent_annotation_family_not_released_segment_or_actor_set",
+    "parent_capture_task_freeze": "PRELEARNING_PARENT_SOURCE_AND_HUMAN_POSITIVE_FAMILY_SEALED_PHYSICAL_GALLERIES_AND_STATISTICS_PENDING",
+    "no_periodic_support": "global_branch_fallback",
+    "head_parameter_relative_tolerance": 0.05,
+    "dummy_capacity_parameters": false,
+    "dct_mean_signal": "(a+b)/2",
+    "dct_difference_signal": "a-b",
+    "capture_temporal_state": "consistent_actor_and_edge_tracks_before_set_readout"
+  },
+  "frozen_strong_baseline": null,
+  "success_thresholds": {
+    "retrieval_mean_r1_gain_pp": 2,
+    "positive_group_folds": 3,
+    "positive_group_folds_role": "descriptive_development_target_not_independent_inference",
+    "nonperiodic_max_regression_pp": 1,
+    "inference_cost_ratio": 2
+  },
+  "historical_superseded_relation_challenge": {
+    "status": "UNASSESSABLE_WITHOUT_MATCHING_INDEPENDENT_HUMAN_LABELS_NOT_AN_ACTIVE_SUCCESS_GATE",
+    "historical_gain_pp": 5,
+    "minimum_verified_text_pairs": 200,
+    "minimum_real_captures": 100,
+    "minimum_participant_components": 8,
+    "blind_human_annotators": 2
+  },
+  "ablations": {
+    "A1": "speed_only_frontend",
+    "A2": "remove_local_and_capture_order",
+    "A3": "pair_bag",
+    "A4": "shuffle_explicit_incidence",
+    "A5": "remove_explicit_phase_fields",
+    "A6": "mean_difference_signal_DCT",
+    "A7": "generic_local_relation_matching_same_counterfactual_data",
+    "A8": "no_counterfactual_objective",
+    "A9": "legacy_representation_calibrated_score_only"
+  },
+  "terminal_states": [
+    "READY_FOR_SUBMISSION",
+    "COMPLETE_NOT_SUPPORTED",
+    "BLOCKED_DATA",
+    "BLOCKED_RIGHTS",
+    "BLOCKED_RUNTIME",
+    "BLOCKED_RELATIONAL_EVIDENCE",
+    "BLOCKED_BUDGET",
+    "FAILED_IMPLEMENTATION"
+  ],
+  "runs": [
+    {
+      "id": "V2-001",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B0",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-002",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B0",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-003",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B0",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-004",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B1",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-005",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B1",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-006",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B1",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-007",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B2",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-008",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B2",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-009",
+      "group": "internal_base",
+      "split": "main",
+      "system": "B2",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-010",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "TMR-Set",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-011",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "TMR-Set",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-012",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "TMR-Set",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-013",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "WaMo-Set",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-014",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "WaMo-Set",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-015",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "WaMo-Set",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-016",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "MIME-Set",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-017",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "MIME-Set",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-018",
+      "group": "literature_baseline",
+      "split": "main",
+      "system": "MIME-Set",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-019",
+      "group": "main_residual",
+      "split": "main",
+      "system": "PhaseSet-v0.2-on-B2",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-020",
+      "group": "main_residual",
+      "split": "main",
+      "system": "PhaseSet-v0.2-on-B2",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-021",
+      "group": "main_residual",
+      "split": "main",
+      "system": "PhaseSet-v0.2-on-B2",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-022",
+      "group": "main_residual",
+      "split": "main",
+      "system": "PhaseSet-V2",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-023",
+      "group": "main_residual",
+      "split": "main",
+      "system": "PhaseSet-V2",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-024",
+      "group": "main_residual",
+      "split": "main",
+      "system": "PhaseSet-V2",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-025",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A1",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-026",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A1",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-027",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A1",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-028",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A2",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-029",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A2",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-030",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A2",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-031",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A3",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-032",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A3",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-033",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A3",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-034",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A4",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-035",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A4",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-036",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A4",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-037",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A5",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-038",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A5",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-039",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A5",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-040",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A6",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-041",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A6",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-042",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A6",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-043",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A7",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-044",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A7",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-045",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A7",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-046",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A8",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-047",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A8",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-048",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A8",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-049",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A9",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-007"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-050",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A9",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-008"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-051",
+      "group": "mechanism_ablation",
+      "split": "main",
+      "system": "A9",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-009"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-052",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "B2",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-053",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "PhaseSet-V2",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-052"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-054",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-055",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "B2",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-056",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "PhaseSet-V2",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-055"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-057",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-058",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "B2",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-059",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "PhaseSet-V2",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-058"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-060",
+      "group": "group_held_out",
+      "split": "group_fold_1",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-061",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "B2",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-062",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "PhaseSet-V2",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-061"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-063",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-064",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "B2",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-065",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "PhaseSet-V2",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-064"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-066",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-067",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "B2",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-068",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "PhaseSet-V2",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-067"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-069",
+      "group": "group_held_out",
+      "split": "group_fold_2",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-070",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "B2",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-071",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "PhaseSet-V2",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-070"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-072",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-073",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "B2",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-074",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "PhaseSet-V2",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-073"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-075",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-076",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "B2",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-077",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "PhaseSet-V2",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-076"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-078",
+      "group": "group_held_out",
+      "split": "group_fold_3",
+      "system": "pilot_frozen_strong_baseline",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-079",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "B2",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-080",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "PhaseSet-V2",
+      "seed": 1729,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-079"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-081",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "MIME-original",
+      "seed": 1729,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-082",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "B2",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-083",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "PhaseSet-V2",
+      "seed": 2718,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-082"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-084",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "MIME-original",
+      "seed": 2718,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-085",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "B2",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-086",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "PhaseSet-V2",
+      "seed": 31415,
+      "max_epochs": 20,
+      "max_steps": null,
+      "depends_on": [
+        "V2-085"
+      ],
+      "status": "PLANNED"
+    },
+    {
+      "id": "V2-087",
+      "group": "external_dyadic",
+      "split": "Inter-X",
+      "system": "MIME-original",
+      "seed": 31415,
+      "max_epochs": 30,
+      "max_steps": null,
+      "depends_on": [],
+      "status": "PLANNED"
+    }
+  ]
+}

@@ -982,6 +982,7 @@ def test_numerical_runtime_is_frozen_checked_and_restored(
     try:
         torch.use_deterministic_algorithms(False, warn_only=True)
         torch.set_float32_matmul_precision("medium")
+        torch.backends.mha.set_fastpath_enabled(True)
         ambient = training_module._capture_numerical_runtime_flags()
 
         formal_config = TrainingConfig(stage="base", seed=1729)
@@ -997,11 +998,18 @@ def test_numerical_runtime_is_frozen_checked_and_restored(
         )
         with training_module._frozen_numerical_runtime(torch.device("cpu")):
             training_module._assert_frozen_numerical_runtime(torch.device("cpu"))
+            assert torch.backends.mha.get_fastpath_enabled() is False
             formal_runtime._numeric_runtime_active = True
-            torch.set_float32_matmul_precision("medium")
+            torch.backends.mha.set_fastpath_enabled(True)
             with pytest.raises(TrainingRuntimeError, match="numerical runtime flags changed"):
                 formal_runtime._assert_live_formal_binding(require_initial_state=True)
             formal_runtime._numeric_runtime_active = False
+        assert training_module._capture_numerical_runtime_flags() == ambient
+
+        with pytest.raises(RuntimeError, match="intentional numerical runtime exit"):
+            with training_module._frozen_numerical_runtime(torch.device("cpu")):
+                assert torch.backends.mha.get_fastpath_enabled() is False
+                raise RuntimeError("intentional numerical runtime exit")
         assert training_module._capture_numerical_runtime_flags() == ambient
 
         synthetic_config = TrainingConfig(

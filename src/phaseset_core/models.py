@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 import math
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import numpy as np
 import torch
@@ -29,10 +29,14 @@ from .periodic import (
     ResourceLimitError,
     TOKEN_WIDTH,
     iter_unordered_pair_chunks,
+    validate_edge_budget,
     validate_energy_floors,
 )
 from .streaming_autograd import StreamingEdgeSummaries, streaming_edge_summaries
 from .torch_periodic import differentiable_edge_summaries
+
+if TYPE_CHECKING:
+    from .periodic_descriptor_cache_v2 import CachedPairChunkStream
 
 
 STATUS: Final = "DATA_FREE_PHASESET_MODEL_NONPRODUCTION_AUTHORITY0"
@@ -767,6 +771,61 @@ class PhaseSetEncoder(nn.Module):
             edge_budget=self.edge_budget,
         )
 
+    def _expected_descriptor_stream_kind(self) -> str | None:
+        """Return the only persisted descriptor family this encoder accepts."""
+
+        return "FULL_RELATION"
+
+    def _validate_cached_descriptor_stream(
+        self,
+        batch: PreparedGroupBatch,
+        descriptor_stream: CachedPairChunkStream,
+    ) -> CachedPairChunkStream:
+        """Bind a verified descriptor stream to this exact batch and model."""
+
+        from .periodic_descriptor_cache_v2 import (
+            CachedPairChunkStream,
+            energy_floors_sha256,
+            prepared_group_batch_sha256,
+        )
+
+        if type(descriptor_stream) is not CachedPairChunkStream:
+            raise PhaseSetModelError(
+                "cached execution requires an exact verified descriptor stream"
+            )
+        expected_kind = self._expected_descriptor_stream_kind()
+        if expected_kind is None:
+            raise PhaseSetModelError(
+                "this registered system does not admit cached descriptor execution"
+            )
+        if descriptor_stream.stream_kind != expected_kind:
+            raise PhaseSetModelError(
+                "cached descriptor stream kind does not match the registered system"
+            )
+        budget = validate_edge_budget(self.edge_budget)
+        expected_edges = sum(count * (count - 1) // 2 for count in batch.actor_counts)
+        if expected_edges > budget:
+            raise ResourceLimitError(
+                required_edges=expected_edges,
+                edge_budget=budget,
+            )
+        cached_batch = descriptor_stream.batch
+        if cached_batch.batch_input_sha256 != prepared_group_batch_sha256(batch):
+            raise PhaseSetModelError(
+                "cached descriptor stream does not bind the actual model batch"
+            )
+        if cached_batch.energy_floors_sha256 != energy_floors_sha256(
+            self._energy_floors
+        ):
+            raise PhaseSetModelError(
+                "cached descriptor stream does not bind the model energy floors"
+            )
+        if cached_batch.edge_count != expected_edges:
+            raise PhaseSetModelError(
+                "cached descriptor stream does not contain the complete batch edge set"
+            )
+        return descriptor_stream
+
     def _transform_edge_outputs(
         self,
         half_ij: Tensor,
@@ -799,6 +858,27 @@ class PhaseSetEncoder(nn.Module):
             include_topology=include_topology,
         )
 
+    def forward_cached(
+        self,
+        batch: PreparedGroupBatch,
+        *,
+        descriptor_stream: CachedPairChunkStream,
+        edge_chunk_size: int = DEFAULT_EDGE_CHUNK_SIZE,
+        include_topology: bool = True,
+    ) -> GroupTokenOutput:
+        """Encode with an explicitly verified, batch-bound descriptor stream."""
+
+        if type(include_topology) is not bool:
+            raise TypeError("include_topology must be an exact built-in bool")
+        checked = validate_prepared_group_batch(batch)
+        stream = self._validate_cached_descriptor_stream(checked, descriptor_stream)
+        return self._forward_activity(
+            skeleton_to_activity(checked),
+            edge_chunk_size=edge_chunk_size,
+            include_topology=include_topology,
+            descriptor_stream=stream,
+        )
+
     def forward_activity(
         self,
         batch: PreparedActivityBatch,
@@ -811,10 +891,28 @@ class PhaseSetEncoder(nn.Module):
         if type(include_topology) is not bool:
             raise TypeError("include_topology must be an exact built-in bool")
         checked = validate_prepared_activity_batch(batch)
+        return self._forward_activity(
+            checked,
+            edge_chunk_size=edge_chunk_size,
+            include_topology=include_topology,
+            descriptor_stream=None,
+        )
+
+    def _forward_activity(
+        self,
+        checked: PreparedActivityBatch,
+        *,
+        edge_chunk_size: int,
+        include_topology: bool,
+        descriptor_stream: CachedPairChunkStream | None,
+    ) -> GroupTokenOutput:
+        """Shared reduction path for uncached and explicitly cached execution."""
+
         summaries = streaming_edge_summaries(
             self,
             checked,
             edge_chunk_size=edge_chunk_size,
+            pair_chunk_stream=descriptor_stream,
         )
         return self._finish_summaries(
             summaries,

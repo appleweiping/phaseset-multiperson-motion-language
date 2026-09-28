@@ -1,0 +1,16 @@
+{
+  "bibliography_sha256": "7db5537b9c85545e3fff89b29e17438936f0bcfb3e7d1ee2cd8de24f4de1a279",
+  "created_at_utc": "20260908T055718662230Z",
+  "ieeebib_sha256": "7e6ca0c8b72158d504a12bb091f817c07032a021ba41ca783cca4c2dd80d570b",
+  "overfull_hbox_count": 0,
+  "overfull_vbox_count": 0,
+  "pdf_bytes": 514458,
+  "pdf_sha256": "e6589c0e35da06b3b7b8f72c3fbacc99eaa44adf6be9c20465b4cb03fe3961a8",
+  "schema": "phaseset-paper-build-v1",
+  "scientific_results_created": false,
+  "source_sha256": "21f99fb638bce1d6451bf58fa75ce01a7f0d081c8573c4d82aaf1ec502c33f50",
+  "spconf_sha256": "dc5d632639040cb183f2ab62780f314845aa021be73048c8a9ec9c2072d64a86",
+  "submission_ready_asserted": false,
+  "underfull_hbox_count": 2,
+  "underfull_vbox_count": 1
+}

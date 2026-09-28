@@ -1,44 +1,29 @@
 % DRAFT / AUTHORITY0 / NO_RESULT / NOT_FOR_SUBMISSION
-% Engineering article template retained because no usable official conference
-% paper kit is available in the repository. Re-template before submission.
+% ICASSP 2027 official-template migration. Author metadata remains pending.
 \pdfminorversion=7
-\documentclass[10pt,twocolumn]{article}
-\usepackage[letterpaper,margin=0.58in,columnsep=0.21in]{geometry}
-\usepackage{amsmath,amssymb,booktabs,array,balance,graphicx,microtype,xcolor}
+\documentclass{article}
+\usepackage{spconf,amsmath,amssymb,booktabs,array,balance,graphicx,microtype,xcolor}
 \usepackage[T1]{fontenc}
-\usepackage{lmodern}
 \usepackage[hidelinks]{hyperref}
 
 \definecolor{holdred}{RGB}{160,22,22}
 \newcommand{\DraftState}{\textcolor{holdred}{\textbf{DRAFT / AUTHORITY0 / NO\_RESULT / NOT\_FOR\_SUBMISSION}}}
 \newcommand{\ResultHold}{\textcolor{holdred}{\textsf{HOLD}}}
 \newcommand{\K}{K}
-\setlength{\parindent}{0.9em}
-\setlength{\parskip}{0pt}
-\setlength{\textfloatsep}{5pt plus 1pt minus 2pt}
-\setlength{\floatsep}{4pt plus 1pt minus 1pt}
-\setlength{\intextsep}{4pt plus 1pt minus 1pt}
-\setlength{\abovedisplayskip}{4pt plus 1pt minus 2pt}
-\setlength{\belowdisplayskip}{4pt plus 1pt minus 2pt}
-\setlength{\abovecaptionskip}{2pt}
-\setlength{\belowcaptionskip}{0pt}
-\renewcommand{\arraystretch}{0.92}
-\raggedbottom
 
-\title{\vspace{-1.5em}PhaseSet: Permutation-Invariant Periodic Relation Tokens\\
+\title{PhaseSet: Permutation-Invariant Periodic Relation Tokens\\
 for Multi-Person Motion--Language Retrieval}
-\author{Anonymous Authors\\[-1pt]\small\DraftState}
-\date{}
+\name{Author metadata pending --- NOT FOR SUBMISSION}
+\address{Affiliation metadata pending\\\DraftState}
 
 \begin{document}
+\ninept
 \maketitle
-\vspace{-1.4em}
 \begin{center}
-\fbox{\parbox{0.93\linewidth}{\centering\small
+\fbox{\parbox{0.93\linewidth}{\centering
 This manuscript registers a method and evaluation protocol only. No training run,
 test score, confidence interval, or submission authority is represented.}}
 \end{center}
-\vspace{-0.55em}
 
 \begin{abstract}
 Group motions can share actor marginals and the same multiset of pair relations
@@ -53,6 +38,10 @@ with deterministic streamed reductions. The confirmatory protocol fixes a
 eight hypotheses, one sealed test, and 100,000 clustered bootstrap draws. This
 is a \textbf{NO\_RESULT} technical draft: every empirical cell is held.
 \end{abstract}
+
+\begin{keywords}
+multi-person motion, text--motion retrieval, periodic relations, set representation
+\end{keywords}
 
 \section{Problem and claim boundary}
 Single-person retrieval already includes contrastive motion synthesis and
@@ -107,8 +96,11 @@ novel signal-processing estimators.
 \section{PhaseSet}
 \subsection{Input and deterministic periodic relations}
 An input is a dynamically padded tensor of $K\!\geq\!2$ actors, 200 frames,
-and 22 body joints, with actor/joint/frame masks. A shared 512D actor encoder
-uses no actor ID. Motion is resampled to 20 Hz; an independently hashed 20-Hz
+and 22 body joints, with actor/joint/frame masks. The group base uses a shared
+512D actor encoder with no actor ID. In parallel, the periodic branch extracts
+fixed, mask-aware body-motion activity from skeleton coordinates; it does not
+apply Morlet kernels to learned base features. Motion is resampled to 20 Hz;
+an independently hashed 20-Hz
 Morlet bank retains PhasePair's six physical center frequencies while its
 legacy 30-Hz tap bytes remain unchanged. Each response is computed once per actor. For every
 valid unordered pair $\{i,j\}$ and band $b$, the inherited directed 13D
@@ -145,7 +137,8 @@ gradients are exact positive zero.
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.96\textwidth]{../figures/phaseset_architecture.pdf}
-\caption{Registered architecture (conceptual, no-result). Directed relations
+\caption{Implementation architecture (no-result). Fixed motion activity and
+the qualified learned group base are parallel paths. Directed relations
 feed a symmetric pair mean and incident-moment topology path; a hard $K{=}2$
 gate preserves dyadic equivalence. Six motion tokens align with six semantic
 text-band tokens on top of the frozen qualified base score.}
@@ -157,9 +150,9 @@ Let $q_b$ be the canonical masked mean of valid node outputs. The band token is
 g_b=m_b\,C\!\left(\bar p_b+\tanh(\lambda_b)q_b\right),
 \label{eq:token}
 \end{equation}
-where $m_b$ is the band-valid mask and $C_b$ is the common postprocessor. The
+where $m_b$ is the band-valid mask and $C$ is the common postprocessor. The
 capacity-matched pair-only control passes exact positive zero for $q_b$ through
-the same $C_b$. Fixed-tree float64 microblock reduction, compensated
+the same $C$. Fixed-tree float64 microblock reduction, compensated
 microblock accumulation, and fixed-order Chan merges make the output invariant
 to registered chunk sizes.
 
@@ -219,10 +212,8 @@ that mean with permutation-invariant pooling by multihead attention (PMA). B2
 uses four alternating blocks: temporal self-attention is applied independently
 with shared weights, then each frame performs set attention across the valid
 actors, followed by PMA. No candidate receives an actor index, actor-specific
-tower, or actor-0 reference. The architecture decision uses the three-seed
-validation mean, not per-seed winners; an exact tie is resolved only by the
-registered resource order. Thus every residual system for a seed reads the
-same immutable winning-base checkpoint and cache.
+tower, or actor-0 reference. Every residual system reads the same immutable
+winning-base checkpoint and cache for its seed.
 
 Systems 01--08 each run at the same three seeds (24 more attempts), for a
 formal total of \textbf{33 training attempts}. Bases use the registered AdamW
@@ -265,18 +256,11 @@ $K\in\{8,32,128,256\}$ must show no allocation with two actor axes; an
 insufficient edge budget yields an explicit resource failure rather than a
 different graph.
 
-\clearpage
-
-\twocolumn[{%
-\begin{minipage}{\textwidth}
-\begin{minipage}[t]{0.475\textwidth}
+\begin{table*}[t]
 \centering
-\refstepcounter{table}
-\textbf{Table \thetable:} Frozen full-gallery matrix; every result is
-\ResultHold.\label{tab:hold}\\[2pt]
-\scriptsize
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{@{}clcccc@{}}
+\caption{Frozen full-gallery matrix; every result is \ResultHold.}
+\label{tab:hold}
+\begin{tabular}{@{}c p{49mm} c c c c@{}}
 \toprule
 ID & System & 1729 & 2718 & 31415 & Aggregate \\
 \midrule
@@ -291,16 +275,13 @@ ID & System & 1729 & 2718 & 31415 & Aggregate \\
 08 & PhaseSet full              & \ResultHold & \ResultHold & \ResultHold & \ResultHold \\
 \bottomrule
 \end{tabular}
-}
-\end{minipage}\hfill
-\begin{minipage}[t]{0.505\textwidth}
+\end{table*}
+
+\begin{table*}[t]
 \centering
-\refstepcounter{table}
-\textbf{Table \thetable:} Frozen slice/scaling report; dash is out of
-scope.\label{tab:scaling}\\[2pt]
-\scriptsize
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{@{}clcccc@{}}
+\caption{Frozen slice/scaling report; dash is out of scope.}
+\label{tab:scaling}
+\begin{tabular}{@{}c p{45mm} c c c c@{}}
 \toprule
 $K$ & Source / role & Full & Hard-$\leq32$ & Memory & Throughput \\
 \midrule
@@ -314,11 +295,7 @@ $K$ & Source / role & Full & Hard-$\leq32$ & Memory & Throughput \\
 256 & synthetic / resource limit  & -- & -- & \ResultHold & \ResultHold \\
 \bottomrule
 \end{tabular}
-}
-\end{minipage}
-\end{minipage}
-\vspace{4pt}
-}]
+\end{table*}
 
 \balance
 
@@ -401,10 +378,6 @@ limit inference. Human-motion records and text require license, privacy, and
 publication review; this repository exposes no raw motion, captions,
 participant identities, reversible memberships, or private model artifacts.
 
-\clearpage
-\sloppy
-\small
-\raggedright
-\bibliographystyle{unsrt}
+\bibliographystyle{IEEEbib}
 \bibliography{references}
 \end{document}

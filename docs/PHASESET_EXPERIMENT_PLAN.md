@@ -1,5 +1,9 @@
 # PhaseSet frozen experiment and statistics plan
 
+> Historical V1 plan. The affected 33-run census is superseded by the
+> [2026-09-26 V2 amendment](PHASESET_V2_AMENDMENT.md) and its 87-stage matrix.
+> Preserve this file for legacy reproducibility; do not run both matrices.
+
 **Plan ID:** `phaseset-multiperson-20260825`
 **Frozen at:** 2026-08-25 20:43:38 +08:00
 **State:** `FROZEN / NOT_EXECUTED / SEALED_TEST_CLOSED`

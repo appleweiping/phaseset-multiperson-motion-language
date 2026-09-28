@@ -36,6 +36,7 @@ paper/*.bbl
 paper/*.blg
 paper/*.log
 paper/*.out
+paper/.venue/
 figures/*_preview.png
 
 recommend paper/

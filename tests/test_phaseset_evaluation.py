@@ -195,6 +195,42 @@ def test_primary_is_bidirectional_capture_macro_not_query_micro() -> None:
     assert contribution_primary == pytest.approx(report.full_gallery.primary)
 
 
+def test_sealed_parent_census_geometry_uses_40_motion_and_200_human_rows() -> None:
+    """Synthetic scores lock the actual parent/query geometry, not test outcomes."""
+
+    parent_count, rows_per_parent = 40, 5
+    scores = np.full((parent_count, parent_count * rows_per_parent), -10.0)
+    for parent in range(parent_count):
+        scores[parent, parent * rows_per_parent : (parent + 1) * rows_per_parent] = 10.0
+    # One C09 caption retrieves another parent; that parent also retrieves this
+    # nonpositive caption ahead of its five positive rows.
+    scores[1, 0] = 11.0
+    dataset = RetrievalDataset(
+        scores=np.ascontiguousarray(scores, dtype=np.float64),
+        motion_commitments=tuple(
+            _commitment("sealed-geometry-motion", parent) for parent in range(parent_count)
+        ),
+        caption_commitments=tuple(
+            _commitment("sealed-geometry-caption", row)
+            for row in range(parent_count * rows_per_parent)
+        ),
+        positive_motion_indices=tuple(
+            (row // rows_per_parent,) for row in range(parent_count * rows_per_parent)
+        ),
+        group_sizes=np.asarray([4] * 24 + [3] * 16, dtype=np.int64),
+        component_labels=("C09",) * 16 + ("C11",) * 8 + ("C15",) * 16,
+    )
+    report = evaluate_retrieval(dataset)
+    assert report.full_gallery.text_to_motion.query_count == 200
+    assert report.full_gallery.motion_to_text.query_count == 40
+    assert report.full_gallery.text_to_motion.aggregation_unit_count == 40
+    assert report.full_gallery.motion_to_text.aggregation_unit_count == 40
+    assert len(report.capture_contributions) == 40
+    assert report.full_gallery.text_to_motion.recall_at_1 == pytest.approx(39.8 / 40)
+    assert report.full_gallery.motion_to_text.recall_at_1 == pytest.approx(39 / 40)
+    assert report.full_gallery.primary == pytest.approx(0.985)
+
+
 def test_variable_positive_ties_use_commitments_in_both_directions() -> None:
     scores = np.zeros((4, 4), dtype=np.float64)
     positives = ((0, 1), (0,), (2, 3), (2,))

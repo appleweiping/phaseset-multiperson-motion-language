@@ -13,13 +13,13 @@ sys.dont_write_bytecode = True
 from release_tree import (  # noqa: E402
     MANIFEST_HEADER,
     MANIFEST_RELATIVE,
+    GitIndexEntry,
     ReleaseTreeError,
-    clean_git_environment,
-    git_tracked_paths,
+    git_index_blobs,
+    git_index_entries,
     is_exact_git_checkout,
     load_archive_manifest,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,32 +28,29 @@ class ManifestError(RuntimeError):
     """Raised when the tracked tree cannot be represented or verified exactly."""
 
 
-def _tracked_paths() -> tuple[PurePosixPath, ...]:
-    return tuple(
-        path for path in git_tracked_paths(ROOT) if path != MANIFEST_RELATIVE
-    )
-
-
-def _index_blob(path: PurePosixPath) -> bytes:
-    completed = subprocess.run(
-        ["git", "cat-file", "blob", f":{path.as_posix()}"],
-        cwd=ROOT,
-        check=True,
-        env=clean_git_environment(),
-        stdout=subprocess.PIPE,
-    )
-    return completed.stdout
-
-
-def _row(path: PurePosixPath) -> str:
-    raw = _index_blob(path)
+def _row(path: PurePosixPath, raw: bytes) -> str:
     return f"{hashlib.sha256(raw).hexdigest()}\t{len(raw)}\t{path.as_posix()}"
 
 
-def render_manifest() -> bytes:
+def _render_manifest(
+    entries: tuple[GitIndexEntry, ...], content: dict[PurePosixPath, bytes]
+) -> bytes:
     header = MANIFEST_HEADER.decode("ascii")
-    rows = "\n".join(_row(path) for path in _tracked_paths())
+    rows = "\n".join(_row(entry.path, content[entry.path]) for entry in entries)
     return (header + rows + ("\n" if rows else "")).encode("utf-8")
+
+
+def _index_snapshot() -> tuple[
+    tuple[GitIndexEntry, ...], dict[PurePosixPath, bytes]
+]:
+    entries = git_index_entries(ROOT)
+    return entries, git_index_blobs(ROOT, entries)
+
+
+def render_manifest() -> bytes:
+    entries, content = _index_snapshot()
+    tracked = tuple(entry for entry in entries if entry.path != MANIFEST_RELATIVE)
+    return _render_manifest(tracked, content)
 
 
 def build_manifest() -> None:
@@ -69,8 +66,10 @@ def verify_manifest() -> None:
     if not is_exact_git_checkout(ROOT):
         load_archive_manifest(ROOT)
         return
-    expected = render_manifest()
-    actual = _index_blob(MANIFEST_RELATIVE)
+    entries, content = _index_snapshot()
+    tracked = tuple(entry for entry in entries if entry.path != MANIFEST_RELATIVE)
+    expected = _render_manifest(tracked, content)
+    actual = content[MANIFEST_RELATIVE]
     if actual != expected:
         raise ManifestError("release manifest does not exactly match the tracked tree")
 

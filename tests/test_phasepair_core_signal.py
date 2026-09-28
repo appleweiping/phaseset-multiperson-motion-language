@@ -430,24 +430,48 @@ def test_canonical_morlet_uses_exact_five_numpy_reductions_per_band(
         assert kwargs == {}
 
 
-def test_kernel01_kills_explicit_left_to_right_reduction_mutant() -> None:
+def test_kernel01_kills_explicit_left_to_right_reduction_mutant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bands, zero_dc_errors, unit_energy_errors = _left_to_right_morlet_mutant()
     observed_sha = _serialize_morlet_bands(bands)
     one_ulp = MORLET_UNIT_ENERGY_BOUND
 
-    assert observed_sha == LEFT_TO_RIGHT_MUTANT_SHA256
-    assert morlet_bank_sha256(bands) == LEFT_TO_RIGHT_MUTANT_SHA256
-    assert tuple(error / one_ulp for error in unit_energy_errors) == (
-        2.5,
-        1.5,
-        0.5,
-        1.0,
-        1.0,
-        0.0,
-    )
-    assert zero_dc_errors[1] == 3.0493334034159067e-16
-    assert zero_dc_errors[1] > MORLET_ZERO_DC_BOUND
+    assert morlet_bank_sha256(bands) == observed_sha
     assert observed_sha != MORLET_ORACLE_SHA256
+    assert any(
+        not np.array_equal(mutant.kernel, canonical.kernel)
+        for mutant, canonical in zip(bands, morlet_kernel_bank(), strict=True)
+    )
+    if signal_module._morlet_runtime_identity() in {
+        ("CPython", (3, 12, 0), "2.4.6", "Windows", "x86_64"),
+        ("CPython", (3, 14, 5), "2.4.6", "Windows", "x86_64"),
+    }:
+        assert observed_sha == LEFT_TO_RIGHT_MUTANT_SHA256
+        assert tuple(error / one_ulp for error in unit_energy_errors) == (
+            2.5,
+            1.5,
+            0.5,
+            1.0,
+            1.0,
+            0.0,
+        )
+        assert zero_dc_errors[1] == 3.0493334034159067e-16
+        assert zero_dc_errors[1] > MORLET_ZERO_DC_BOUND
+
+    receipt = signal_module._MorletBuildReceipt(
+        bands,
+        zero_dc_errors,
+        unit_energy_errors,
+    )
+    monkeypatch.setattr(
+        signal_module,
+        "_morlet_runtime_identity",
+        lambda: ("CPython", (3, 12, 12), "2.4.6", "Linux", "x86_64"),
+    )
+    monkeypatch.setattr(signal_module, "_build_morlet_formula_bank", lambda: receipt)
+    with pytest.raises(SignalContractHold, match="PORTABLE_FORMULA_DIGEST_MISMATCH"):
+        morlet_kernel_bank()
 
 
 def test_kernel01_kills_decimal_rounded_energy_bound_mutant() -> None:

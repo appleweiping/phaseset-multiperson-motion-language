@@ -260,6 +260,35 @@ def test_resume_and_system_zero_reach_factory_without_path_serialization(tmp_pat
     assert str(checkpoint) not in stdout
 
 
+def test_base_resume_system_id_reaches_request_aware_factory(tmp_path: Path) -> None:
+    captured: list[cli.CLICommandRequest] = []
+
+    def factory(request: cli.CLICommandRequest) -> execution.RuntimeAdapter:
+        captured.append(request)
+        return _SyntheticAdapter()
+
+    attempt = tmp_path / "base-resume-attempt"
+    checkpoint = tmp_path / "base-checkpoint.pt"
+    code, stdout, stderr = _invoke(
+        [
+            "resume", "--attempt-dir", str(attempt), "--checkpoint", str(checkpoint),
+            "--system-id", "B1", "--config", str(CONFIG),
+        ],
+        runtime_adapter_factory=factory,
+    )
+    payload = json.loads(stdout)
+    assert code == cli.EXIT_OK
+    assert stderr == ""
+    assert payload["production"] is False
+    assert payload["authority"] == 0
+    assert len(captured) == 1
+    assert captured[0].attempt_directory == attempt
+    assert captured[0].resume_checkpoint == checkpoint
+    assert captured[0].system_id == "B1"
+    assert str(attempt) not in stdout
+    assert str(checkpoint) not in stdout
+
+
 def test_private_parameters_cannot_be_silently_dropped_by_prebuilt_adapter(
     tmp_path: Path,
 ) -> None:

@@ -40,6 +40,7 @@ SEALED_TEST_EVALUATION_SCHEMA = "phaseset-sealed-test-evaluation-binding-v1"
 TRAINING_CONFIG_SCHEMA = "phaseset-training-config-v1"
 RUNTIME_ADMISSION_SCHEMA = "phaseset-runtime-admission-v1"
 COMMAND_RESULT_SCHEMA = "phaseset-command-result-v2"
+MAX_VERIFIED_ATTEMPT_CHAIN_LENGTH = 64
 
 COMMANDS = (
     "preflight",
@@ -1032,6 +1033,89 @@ class _VerifiedAttemptLedger:
     resume_raw: bytes | None
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class CompletedAttemptEvidence:
+    """Owned canonical evidence for one fully verified successful attempt.
+
+    The records and byte strings come from the same complete attempt-chain
+    verification pass. ``latest_checkpoint`` is the receipt bound by the
+    terminal; it is not a validation-best selection. A consumer that needs the
+    validation-best payload must load the payload identified by
+    ``latest_checkpoint.checkpoint_payload_sha256``, validate that payload's
+    best-checkpoint name/digest pointer, and authenticate the separately
+    materialized best payload against that digest.
+    """
+
+    attempt: AttemptRecord
+    attempt_raw: bytes
+    latest_checkpoint: CheckpointRecord
+    latest_checkpoint_raw: bytes
+    terminal: TerminalRecord
+    terminal_raw: bytes
+    resume: ResumeRecord | None
+    resume_raw: bytes | None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.attempt) is not AttemptRecord
+            or type(self.latest_checkpoint) is not CheckpointRecord
+            or type(self.terminal) is not TerminalRecord
+            or type(self.attempt_raw) is not bytes
+            or type(self.latest_checkpoint_raw) is not bytes
+            or type(self.terminal_raw) is not bytes
+        ):
+            raise TypeError("completed attempt evidence fields have the wrong exact type")
+        if (self.resume is None) != (self.resume_raw is None):
+            raise ExecutionContractError("completed attempt resume record/bytes are incomplete")
+        if self.resume is not None and (
+            type(self.resume) is not ResumeRecord or type(self.resume_raw) is not bytes
+        ):
+            raise TypeError("completed attempt resume fields have the wrong exact type")
+        if (
+            parse_attempt_bytes(self.attempt_raw) != self.attempt
+            or parse_checkpoint_bytes(self.latest_checkpoint_raw)
+            != self.latest_checkpoint
+            or parse_terminal_bytes(self.terminal_raw) != self.terminal
+            or (
+                self.resume is not None
+                and parse_resume_bytes(self.resume_raw) != self.resume
+            )
+        ):
+            raise ExecutionContractError("completed attempt records differ from owned bytes")
+        identity = (self.attempt.attempt_id, self.attempt.run_id)
+        if (
+            (self.latest_checkpoint.attempt_id, self.latest_checkpoint.run_id)
+            != identity
+            or (self.terminal.attempt_id, self.terminal.run_id) != identity
+            or self.terminal.attempt_receipt_sha256
+            != artifact_sha256(self.attempt_raw)
+            or self.terminal.outcome != "SUCCEEDED"
+            or self.terminal.failure_code is not None
+            or self.terminal.latest_checkpoint_receipt_sha256
+            != artifact_sha256(self.latest_checkpoint_raw)
+            or (
+                self.resume is not None
+                and (
+                    (self.resume.new_attempt_id, self.resume.run_id) != identity
+                    or self.resume.created_at_utc != self.attempt.created_at_utc
+                )
+            )
+        ):
+            raise ExecutionContractError("completed attempt evidence identity is inconsistent")
+
+    @property
+    def terminal_sha256(self) -> str:
+        return artifact_sha256(self.terminal_raw)
+
+    @property
+    def latest_checkpoint_receipt_sha256(self) -> str:
+        return artifact_sha256(self.latest_checkpoint_raw)
+
+    @property
+    def latest_checkpoint_payload_sha256(self) -> str:
+        return self.latest_checkpoint.checkpoint_payload_sha256
+
+
 def _attempt_root(root: str | Path) -> Path:
     checked = Path(root)
     if checked.is_symlink() or not checked.is_dir():
@@ -1129,7 +1213,15 @@ def _verify_attempt_chain(
     root: Path,
     attempt_id: str,
     visited: frozenset[str] = frozenset(),
+    *,
+    remaining_attempts: int = MAX_VERIFIED_ATTEMPT_CHAIN_LENGTH,
 ) -> _VerifiedAttemptLedger:
+    if (
+        type(remaining_attempts) is not int
+        or remaining_attempts < 1
+        or remaining_attempts > MAX_VERIFIED_ATTEMPT_CHAIN_LENGTH
+    ):
+        raise ExecutionContractError("resume predecessor chain exceeds its closed attempt bound")
     if attempt_id in visited:
         raise ExecutionContractError("resume predecessor chain contains a cycle")
     ledger = _verify_local_attempt(root / attempt_id, attempt_id)
@@ -1138,6 +1230,7 @@ def _verify_attempt_chain(
             root,
             ledger.resume.predecessor_attempt_id,
             visited | {attempt_id},
+            remaining_attempts=remaining_attempts - 1,
         )
         _validate_resume_source(ledger.resume, predecessor)
         if (
@@ -1148,6 +1241,44 @@ def _verify_attempt_chain(
         ):
             raise ExecutionContractError("resumed attempt changed a frozen plan binding")
     return ledger
+
+
+def verified_completed_attempt_evidence(
+    root: str | Path,
+    attempt_id: object,
+) -> CompletedAttemptEvidence:
+    """Return owned records/bytes after one complete successful-chain check.
+
+    No ledger path is reread after ``_verify_attempt_chain`` returns. The
+    returned latest checkpoint is only the terminal-bound resume/progress
+    checkpoint. Runtime-specific best-checkpoint pointers live inside that
+    checkpoint payload and remain the responsibility of the consumer.
+    """
+
+    checked_id = _attempt_id(attempt_id)
+    checked_root = _attempt_root(root)
+    ledger = _verify_attempt_chain(checked_root, checked_id)
+    terminal = ledger.terminal
+    terminal_raw = ledger.terminal_raw
+    if terminal is None or terminal_raw is None:
+        raise ExecutionContractError("completed attempt has no immutable terminal")
+    if terminal.outcome != "SUCCEEDED":
+        raise ExecutionContractError("completed attempt terminal is not SUCCEEDED")
+    if terminal.failure_code is not None:
+        raise ExecutionContractError("successful completed attempt cannot carry a failure code")
+    if not ledger.checkpoints:
+        raise ExecutionContractError("successful completed attempt has no checkpoint receipt")
+    latest_checkpoint, _, latest_checkpoint_raw = ledger.checkpoints[-1]
+    return CompletedAttemptEvidence(
+        attempt=ledger.attempt,
+        attempt_raw=ledger.attempt_raw,
+        latest_checkpoint=latest_checkpoint,
+        latest_checkpoint_raw=latest_checkpoint_raw,
+        terminal=terminal,
+        terminal_raw=terminal_raw,
+        resume=ledger.resume,
+        resume_raw=ledger.resume_raw,
+    )
 
 
 def verified_resume_checkpoint_payload_sha256(
@@ -1860,10 +1991,12 @@ __all__ = [
     "CheckpointRecord",
     "CommandIntent",
     "CommandResult",
+    "CompletedAttemptEvidence",
     "DataFreeRunner",
     "ExecutionContractError",
     "ExecutionHold",
     "HEARTBEAT_SCHEMA",
+    "MAX_VERIFIED_ATTEMPT_CHAIN_LENGTH",
     "HeartbeatRecord",
     "PERIODIC_CACHE_SCHEMA",
     "PeriodicCacheRecord",
@@ -1904,5 +2037,6 @@ __all__ = [
     "runtime_admission_sha256",
     "runtime_handler_manifest_sha256",
     "validate_training_config_bytes",
+    "verified_completed_attempt_evidence",
     "verified_resume_checkpoint_payload_sha256",
 ]

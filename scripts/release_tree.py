@@ -6,10 +6,9 @@ import hashlib
 import os
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Mapping
-
 
 MANIFEST_RELATIVE = PurePosixPath("RELEASE_FILES.sha256")
 MANIFEST_HEADER = b"# sha256\\tbytes\\tgit_index_path; self excluded\n"
@@ -30,6 +29,15 @@ class ManifestEntry:
 
 
 @dataclass(frozen=True)
+class GitIndexEntry:
+    """One validated stage-zero regular file in the Git index."""
+
+    mode: str
+    object_id: str
+    path: PurePosixPath
+
+
+@dataclass(frozen=True)
 class ReleaseTree:
     """One resolved tree whose paths and bytes share the same authority."""
 
@@ -37,19 +45,17 @@ class ReleaseTree:
     paths: tuple[PurePosixPath, ...]
     authority: str
     archive_content: Mapping[PurePosixPath, bytes] | None = None
+    index_content: Mapping[PurePosixPath, bytes] | None = None
 
     def read_bytes(self, path: PurePosixPath) -> bytes:
         if path not in self.paths:
             raise ReleaseTreeError(f"path is outside the release tree: {path.as_posix()}")
         if self.authority == "git-index":
-            completed = subprocess.run(
-                ["git", "cat-file", "blob", f":{path.as_posix()}"],
-                cwd=self.root,
-                check=True,
-                env=clean_git_environment(),
-                stdout=subprocess.PIPE,
-            )
-            return completed.stdout
+            if self.index_content is None or path not in self.index_content:
+                raise ReleaseTreeError(
+                    f"Git-index snapshot lacks release path: {path.as_posix()}"
+                )
+            return self.index_content[path]
         if self.authority == "archive-manifest":
             if self.archive_content is None or path not in self.archive_content:
                 raise ReleaseTreeError(
@@ -106,8 +112,8 @@ def is_exact_git_checkout(root: Path) -> bool:
         return False
 
 
-def git_tracked_paths(root: Path) -> tuple[PurePosixPath, ...]:
-    """Return safe index paths, rejecting an empty or non-PhasePair index."""
+def git_index_entries(root: Path) -> tuple[GitIndexEntry, ...]:
+    """Return validated regular-file entries from the stage-zero Git index."""
 
     if not is_exact_git_checkout(root):
         raise ReleaseTreeError("root is not an exact Git checkout")
@@ -118,7 +124,7 @@ def git_tracked_paths(root: Path) -> tuple[PurePosixPath, ...]:
         env=clean_git_environment(),
         stdout=subprocess.PIPE,
     )
-    paths: list[PurePosixPath] = []
+    entries: list[GitIndexEntry] = []
     for raw in completed.stdout.split(b"\0"):
         if not raw:
             continue
@@ -133,13 +139,117 @@ def git_tracked_paths(root: Path) -> tuple[PurePosixPath, ...]:
             raise ReleaseTreeError("release index contains a non-regular or unmerged item")
         if re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})", raw_object) is None:
             raise ReleaseTreeError("release index contains an invalid object id")
-        paths.append(_safe_relative_path(raw_path.decode("utf-8", errors="strict")))
-    ordered = tuple(sorted(paths, key=lambda value: value.as_posix().encode("utf-8")))
-    if not ordered or MANIFEST_RELATIVE not in ordered:
+        entries.append(
+            GitIndexEntry(
+                raw_mode.decode("ascii"),
+                raw_object.decode("ascii"),
+                _safe_relative_path(raw_path.decode("utf-8", errors="strict")),
+            )
+        )
+    ordered = tuple(
+        sorted(entries, key=lambda value: value.path.as_posix().encode("utf-8"))
+    )
+    paths = tuple(entry.path for entry in ordered)
+    if not ordered or MANIFEST_RELATIVE not in paths:
         raise ReleaseTreeError("Git index is empty or lacks RELEASE_FILES.sha256")
-    if len(ordered) != len(set(ordered)):
+    if len(paths) != len(set(paths)):
         raise ReleaseTreeError("duplicate Git-index release path")
     return ordered
+
+
+def git_tracked_paths(root: Path) -> tuple[PurePosixPath, ...]:
+    """Return safe regular-file index paths in canonical byte order."""
+
+    return tuple(entry.path for entry in git_index_entries(root))
+
+
+def _parse_git_batch_output(
+    raw: bytes, entries: tuple[GitIndexEntry, ...]
+) -> dict[PurePosixPath, bytes]:
+    """Bind one strict ``git cat-file --batch`` response to index entries."""
+
+    content: dict[PurePosixPath, bytes] = {}
+    cursor = 0
+    for entry in entries:
+        header_end = raw.find(b"\n", cursor)
+        if header_end < 0:
+            raise ReleaseTreeError(
+                f"Git batch header is truncated: {entry.path.as_posix()}"
+            )
+        header = raw[cursor:header_end]
+        cursor = header_end + 1
+        expected_object = entry.object_id.encode("ascii")
+        if header == expected_object + b" missing":
+            raise ReleaseTreeError(
+                f"Git batch object is missing: {entry.path.as_posix()}"
+            )
+        fields = header.split(b" ")
+        if len(fields) != 3 or any(not field for field in fields):
+            raise ReleaseTreeError(
+                f"Git batch header is malformed: {entry.path.as_posix()}"
+            )
+        raw_object, raw_type, raw_size = fields
+        if raw_object != expected_object:
+            raise ReleaseTreeError(
+                f"Git batch object ID mismatch: {entry.path.as_posix()}"
+            )
+        if raw_type != b"blob":
+            raise ReleaseTreeError(
+                f"Git index object is not a blob: {entry.path.as_posix()}"
+            )
+        if re.fullmatch(rb"(?:0|[1-9][0-9]*)", raw_size) is None:
+            raise ReleaseTreeError(
+                f"Git batch byte count is malformed: {entry.path.as_posix()}"
+            )
+        size = int(raw_size)
+        payload_end = cursor + size
+        if payload_end > len(raw) or raw[payload_end : payload_end + 1] != b"\n":
+            raise ReleaseTreeError(
+                f"Git batch payload is truncated: {entry.path.as_posix()}"
+            )
+        content[entry.path] = raw[cursor:payload_end]
+        cursor = payload_end + 1
+    if cursor != len(raw):
+        raise ReleaseTreeError("Git batch output has unexpected trailing bytes")
+    return content
+
+
+def git_index_blobs(
+    root: Path, entries: tuple[GitIndexEntry, ...]
+) -> dict[PurePosixPath, bytes]:
+    """Read all validated index blobs in one strict Git batch transaction."""
+
+    paths = tuple(entry.path for entry in entries)
+    canonical = tuple(sorted(paths, key=lambda value: value.as_posix().encode("utf-8")))
+    if (
+        not entries
+        or paths != canonical
+        or len(paths) != len(set(paths))
+        or MANIFEST_RELATIVE not in paths
+    ):
+        raise ReleaseTreeError("Git index entries are incomplete or not canonical")
+    for entry in entries:
+        if entry.mode not in {"100644", "100755"}:
+            raise ReleaseTreeError("release index contains a non-regular item")
+        if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", entry.object_id) is None:
+            raise ReleaseTreeError("release index contains an invalid object id")
+        if _safe_relative_path(entry.path.as_posix()) != entry.path:
+            raise ReleaseTreeError("release index contains an invalid path")
+    requests = b"".join(entry.object_id.encode("ascii") + b"\n" for entry in entries)
+    completed = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=root,
+        check=False,
+        env=clean_git_environment(),
+        input=requests,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        raise ReleaseTreeError("Git batch object stream failed")
+    content = _parse_git_batch_output(completed.stdout, entries)
+    if git_index_entries(root) != entries:
+        raise ReleaseTreeError("Git index changed while reading release objects")
+    return content
 
 
 def _filesystem_files(root: Path) -> dict[PurePosixPath, Path]:
@@ -242,7 +352,14 @@ def resolve_release_tree(root: Path) -> ReleaseTree:
     """Resolve paths and content reads through one consistent authority."""
 
     if is_exact_git_checkout(root):
-        return ReleaseTree(root, git_tracked_paths(root), "git-index")
+        entries = git_index_entries(root)
+        content = git_index_blobs(root, entries)
+        return ReleaseTree(
+            root,
+            tuple(entry.path for entry in entries),
+            "git-index",
+            index_content=content,
+        )
     entries, content = _load_archive_snapshot(root)
     paths = tuple(entry.path for entry in entries) + (MANIFEST_RELATIVE,)
     ordered = tuple(sorted(paths, key=lambda value: value.as_posix().encode("utf-8")))

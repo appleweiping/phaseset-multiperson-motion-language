@@ -53,20 +53,28 @@ def test_phaseset_20hz_bank_has_independent_schema_digest_and_legacy_is_unchange
     assert morlet.morlet_bank_sha256(bands) == morlet.MORLET_ORACLE_SHA256
     assert morlet.MORLET_ORACLE_SHA256 != legacy_signal.MORLET_ORACLE_SHA256
     assert legacy_signal.morlet_bank_sha256(
-        legacy_signal.morlet_formula_bank_diagnostic()
+        legacy_signal.morlet_kernel_bank()
     ) == "4f75ab687d333af8b436feea371dbaee56c55256e91c42c5e1ce45935beed5d7"
     assert legacy_signal.MORLET_LENGTHS == (120, 80, 54, 36, 24, 16)
 
 
 def test_each_20hz_kernel_is_zero_dc_unit_energy_and_peaks_at_registered_hz() -> None:
+    zero_dc_errors = []
+    unit_energy_errors = []
     frequency_grid = np.linspace(0.05, 9.95, 9901, dtype=np.float64)
     for band in morlet.morlet_kernel_bank():
-        assert abs(np.sum(band.kernel, dtype=np.complex128)) <= morlet.MORLET_ZERO_DC_BOUND
+        zero_dc_error = float(
+            np.abs(np.sum(band.kernel, dtype=np.complex128))
+        )
+        zero_dc_errors.append(zero_dc_error)
+        assert zero_dc_error <= morlet.MORLET_ZERO_DC_BOUND
         energy = np.sum(
             np.square(np.abs(band.kernel), dtype=np.float64),
             dtype=np.float64,
         )
-        assert abs(float(energy) - 1.0) <= morlet.MORLET_UNIT_ENERGY_BOUND
+        unit_energy_error = float(np.abs(energy - np.float64(1.0)))
+        unit_energy_errors.append(unit_energy_error)
+        assert unit_energy_error <= morlet.MORLET_UNIT_ENERGY_BOUND
         samples = np.arange(band.length, dtype=np.float64)
         responses = np.abs(
             np.exp(
@@ -105,6 +113,9 @@ def test_each_20hz_kernel_is_zero_dc_unit_energy_and_peaks_at_registered_hz() ->
             @ band.kernel
         )
         assert registered > 1.7 * silently_shifted
+
+    assert tuple(zero_dc_errors) == morlet.MORLET_EXPECTED_ZERO_DC_ERRORS
+    assert tuple(unit_energy_errors) == morlet.MORLET_EXPECTED_UNIT_ENERGY_ERRORS
 
 
 def test_known_frequency_and_one_sample_delay_recover_band_phase_and_seconds() -> None:

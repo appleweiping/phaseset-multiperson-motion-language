@@ -589,6 +589,7 @@ def write_checkpoint_atomic(value: ValidatedCheckpoint, path: Path) -> bytes:
     if _path_entry_exists(target, "checkpoint target availability is unavailable"):
         raise CheckpointPathError("checkpoint target already exists")
     descriptor = -1
+    ownership_descriptor = -1
     temp_name: str | None = None
     committed = False
     succeeded = False
@@ -637,6 +638,12 @@ def write_checkpoint_atomic(value: ValidatedCheckpoint, path: Path) -> bytes:
                 raise CheckpointPathError("checkpoint temp short write")
             handle.flush()
             os.fsync(handle.fileno())
+            if os.name == "posix":
+                # Keep the original inode alive even if every pathname is
+                # concurrently removed. Otherwise POSIX may immediately reuse
+                # its (device,inode) for a replacement owned by another writer,
+                # and failure cleanup could mistake that replacement for ours.
+                ownership_descriptor = os.dup(handle.fileno())
         temp_path = Path(temp_name)
         retirement_path = Path(temp_name + ".committed-retirement")
         if _path_entry_exists(
@@ -709,8 +716,12 @@ def write_checkpoint_atomic(value: ValidatedCheckpoint, path: Path) -> bytes:
                 Path(temp_name).unlink(missing_ok=True)
             except OSError:
                 pass
-        if committed and not succeeded:
-            remove_committed_target_if_owned()
+        try:
+            if committed and not succeeded:
+                remove_committed_target_if_owned()
+        finally:
+            if ownership_descriptor >= 0:
+                os.close(ownership_descriptor)
 
 
 def _stable_read(path: Path) -> bytes:
@@ -839,11 +850,13 @@ def _install_sealed_api() -> None:
     )
     os_proxy = types.SimpleNamespace(
         close=os.close,
+        dup=os.dup,
         fdopen=os.fdopen,
         fspath=os.fspath,
         fstat=os.fstat,
         fsync=os.fsync,
         link=os.link,
+        name=os.name,
         rename=os.rename,
         path=types.SimpleNamespace(abspath=os.path.abspath),
     )

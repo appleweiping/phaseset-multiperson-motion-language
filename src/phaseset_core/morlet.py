@@ -12,10 +12,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import math
+import platform
 import struct
+import sys
 from typing import Final
 
 import numpy as np
+
+from phaseset_core._morlet_oracle_bytes import (
+    CANONICAL_BANK_BYTES as _MORLET_CANONICAL_BANK_BYTES,
+    ORACLE_EXPORT_FORMULA_MODULE as _MORLET_EXPORT_FORMULA_MODULE,
+    ORACLE_EXPORT_RUNTIME as MORLET_ORACLE_EXPORT_RUNTIME,
+    ORACLE_EXPORT_SCHEMA as MORLET_PORTABLE_SCHEMA,
+    ORACLE_EXPORT_SHA256 as _MORLET_EXPORT_SHA256,
+)
 
 
 STATUS: Final = "DATA_FREE_PHASESET_20HZ_MORLET_ORACLE_AUTHORITY0"
@@ -40,6 +50,12 @@ MORLET_SIGMAS: Final[tuple[float, ...]] = (
 )
 MORLET_ORACLE_SHA256: Final = (
     "633d754bba12dab0555722f4b8963409a110c8681796cc907d163096e2e42655"
+)
+MORLET_FORMULA_MAX_ABS_ERROR_BOUND: Final = float.fromhex(
+    "0x1.0000000000000p-52"
+)
+MORLET_PORTABLE_LINUX_FORMULA_SHA256: Final = (
+    "926c06aa57a27139d1ed1a9e0d9c3da191717b8a9495d6fff900bda44459d9a3"
 )
 MORLET_ZERO_DC_BOUND: Final = 2.220446049250313e-16
 MORLET_UNIT_ENERGY_BOUND: Final = 2.220446049250313e-16
@@ -175,21 +191,156 @@ def morlet_formula_bank_diagnostic() -> tuple[PhaseSetMorletBand, ...]:
     return _build_formula_bank().bands
 
 
+def _canonical_morlet_bank() -> tuple[PhaseSetMorletBand, ...]:
+    """Decode the Windows-oracle bytes without replaying platform libm calls."""
+
+    if (
+        MORLET_PORTABLE_SCHEMA != "portable-morlet-oracle-bytes-v1"
+        or MORLET_ORACLE_EXPORT_RUNTIME != "CPython 3.14.5 / NumPy 2.4.6 / Windows"
+        or _MORLET_EXPORT_FORMULA_MODULE != "phaseset_core.morlet"
+        or _MORLET_EXPORT_SHA256 != MORLET_ORACLE_SHA256
+        or hashlib.sha256(_MORLET_CANONICAL_BANK_BYTES).hexdigest() != MORLET_ORACLE_SHA256
+    ):
+        raise PhaseSetMorletOracleError("PHASESET_MORLET_PORTABLE_PROVENANCE_MISMATCH")
+    cursor = 0
+    bands: list[PhaseSetMorletBand] = []
+    for index, (frequency, length, sigma) in enumerate(
+        zip(MORLET_FREQUENCIES_HZ, MORLET_LENGTHS, MORLET_SIGMAS, strict=True),
+        start=1,
+    ):
+        if cursor + 2 > len(_MORLET_CANONICAL_BANK_BYTES):
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_PORTABLE_BYTES_TRUNCATED")
+        (encoded_length,) = struct.unpack_from(">H", _MORLET_CANONICAL_BANK_BYTES, cursor)
+        cursor += 2
+        if encoded_length != length:
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_PORTABLE_SUPPORT_MISMATCH")
+        stop = cursor + 16 * length
+        if stop > len(_MORLET_CANONICAL_BANK_BYTES):
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_PORTABLE_BYTES_TRUNCATED")
+        values = np.frombuffer(
+            _MORLET_CANONICAL_BANK_BYTES,
+            dtype=">f8",
+            count=2 * length,
+            offset=cursor,
+        ).reshape(length, 2)
+        kernel = np.empty(length, dtype=np.complex128)
+        kernel.real = values[:, 0]
+        kernel.imag = values[:, 1]
+        kernel = np.ascontiguousarray(kernel, dtype=np.complex128)
+        if not bool(np.isfinite(kernel).all()):
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_PORTABLE_NONFINITE")
+        kernel.setflags(write=False)
+        bands.append(PhaseSetMorletBand(index, frequency, length, sigma, kernel))
+        cursor = stop
+    if cursor != len(_MORLET_CANONICAL_BANK_BYTES):
+        raise PhaseSetMorletOracleError("PHASESET_MORLET_PORTABLE_TRAILING_BYTES")
+    result = tuple(bands)
+    if morlet_bank_sha256(result) != MORLET_ORACLE_SHA256:
+        raise PhaseSetMorletOracleError("PHASESET_MORLET_DIGEST_MISMATCH")
+    return result
+
+
+def _formula_max_abs_error(
+    formula: tuple[PhaseSetMorletBand, ...],
+    canonical: tuple[PhaseSetMorletBand, ...],
+) -> float:
+    if len(formula) != len(canonical):
+        raise PhaseSetMorletOracleError("PHASESET_MORLET_FORMULA_EQUIVALENCE_SHAPE")
+    maximum = 0.0
+    for expected_index, (observed, frozen) in enumerate(
+        zip(formula, canonical, strict=True), start=1
+    ):
+        if (
+            observed.index != expected_index
+            or frozen.index != expected_index
+            or observed.frequency_hz != frozen.frequency_hz
+            or observed.length != frozen.length
+            or observed.sigma != frozen.sigma
+            or observed.kernel.shape != frozen.kernel.shape
+        ):
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_FORMULA_EQUIVALENCE_SCHEMA")
+        difference = np.abs(observed.kernel - frozen.kernel)
+        if not bool(np.isfinite(difference).all()):
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_FORMULA_EQUIVALENCE_NONFINITE")
+        maximum = max(maximum, float(np.max(difference)))
+    return maximum
+
+
+def morlet_formula_max_abs_error() -> float:
+    """Return the native-formula distance from the immutable canonical bytes."""
+
+    return _formula_max_abs_error(
+        morlet_formula_bank_diagnostic(),
+        _canonical_morlet_bank(),
+    )
+
+
+def _morlet_runtime_identity() -> tuple[str, tuple[int, int, int], str, str, str]:
+    """Return only the fields used to qualify a native formula replay."""
+
+    machine = platform.machine().lower()
+    if machine == "amd64":
+        machine = "x86_64"
+    return (
+        platform.python_implementation(),
+        sys.version_info[:3],
+        np.__version__,
+        platform.system(),
+        machine,
+    )
+
+
+def _validate_morlet_formula_receipt(
+    receipt: _BuildReceipt,
+    canonical: tuple[PhaseSetMorletBand, ...],
+) -> None:
+    """Accept only a registered exact replay or the qualified Linux replay."""
+
+    identity = _morlet_runtime_identity()
+    implementation, python_version, numpy_version, system, machine = identity
+    supported_family = (
+        implementation == "CPython"
+        and python_version[:2] in {(3, 12), (3, 13), (3, 14)}
+        and numpy_version == "2.4.6"
+        and machine == "x86_64"
+    )
+    formula_digest = morlet_bank_sha256(receipt.bands)
+    if _formula_max_abs_error(
+        receipt.bands, canonical
+    ) > MORLET_FORMULA_MAX_ABS_ERROR_BOUND:
+        raise PhaseSetMorletOracleError("PHASESET_MORLET_FORMULA_EQUIVALENCE_FAIL")
+    if supported_family and system == "Windows":
+        # Runtime identity, rather than an accidentally matching digest, selects
+        # the original exact-oracle branch. Any one-ULP receipt drift must HOLD.
+        if formula_digest != MORLET_ORACLE_SHA256:
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_DIGEST_MISMATCH")
+        if receipt.zero_dc_errors != MORLET_EXPECTED_ZERO_DC_ERRORS:
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_ZERO_DC_ORACLE_FAIL")
+        if receipt.unit_energy_errors != MORLET_EXPECTED_UNIT_ENERGY_ERRORS:
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_UNIT_ENERGY_ORACLE_FAIL")
+        if any(error > MORLET_ZERO_DC_BOUND for error in receipt.zero_dc_errors):
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_ZERO_DC_BOUND_FAIL")
+        if any(error > MORLET_UNIT_ENERGY_BOUND for error in receipt.unit_energy_errors):
+            raise PhaseSetMorletOracleError("PHASESET_MORLET_UNIT_ENERGY_BOUND_FAIL")
+        return
+    if supported_family and system == "Linux":
+        if formula_digest != MORLET_PORTABLE_LINUX_FORMULA_SHA256:
+            raise PhaseSetMorletOracleError(
+                "PHASESET_MORLET_PORTABLE_FORMULA_DIGEST_MISMATCH"
+            )
+        return
+    raise PhaseSetMorletOracleError("PHASESET_MORLET_PORTABLE_RUNTIME_UNQUALIFIED")
+
+
 def morlet_kernel_bank() -> tuple[PhaseSetMorletBand, ...]:
-    """Rebuild and enforce the complete independent PhaseSet 20-Hz oracle."""
+    """Return portable oracle bytes after replaying the unchanged formula."""
 
     receipt = _build_formula_bank()
-    if morlet_bank_sha256(receipt.bands) != MORLET_ORACLE_SHA256:
-        raise PhaseSetMorletOracleError("PHASESET_MORLET_DIGEST_MISMATCH")
-    if receipt.zero_dc_errors != MORLET_EXPECTED_ZERO_DC_ERRORS:
-        raise PhaseSetMorletOracleError("PHASESET_MORLET_ZERO_DC_ORACLE_FAIL")
-    if receipt.unit_energy_errors != MORLET_EXPECTED_UNIT_ENERGY_ERRORS:
-        raise PhaseSetMorletOracleError("PHASESET_MORLET_UNIT_ENERGY_ORACLE_FAIL")
-    if any(error > MORLET_ZERO_DC_BOUND for error in receipt.zero_dc_errors):
-        raise PhaseSetMorletOracleError("PHASESET_MORLET_ZERO_DC_BOUND_FAIL")
-    if any(error > MORLET_UNIT_ENERGY_BOUND for error in receipt.unit_energy_errors):
-        raise PhaseSetMorletOracleError("PHASESET_MORLET_UNIT_ENERGY_BOUND_FAIL")
-    return receipt.bands
+    canonical = _canonical_morlet_bank()
+    _validate_morlet_formula_receipt(receipt, canonical)
+    # The returned physical bank is canonical, not the native diagnostic. Its
+    # verified original digest binds the original zero-DC and unit-energy bytes.
+    return canonical
 
 
 def morlet_length_mask(valid_length: object) -> np.ndarray:
@@ -207,8 +358,12 @@ __all__ = [
     "MORLET_EXPECTED_UNIT_ENERGY_ERRORS",
     "MORLET_EXPECTED_ZERO_DC_ERRORS",
     "MORLET_FREQUENCIES_HZ",
+    "MORLET_FORMULA_MAX_ABS_ERROR_BOUND",
     "MORLET_LENGTHS",
     "MORLET_ORACLE_SHA256",
+    "MORLET_ORACLE_EXPORT_RUNTIME",
+    "MORLET_PORTABLE_LINUX_FORMULA_SHA256",
+    "MORLET_PORTABLE_SCHEMA",
     "MORLET_SIGMAS",
     "MORLET_UNIT_ENERGY_BOUND",
     "MORLET_ZERO_DC_BOUND",
@@ -220,6 +375,7 @@ __all__ = [
     "STATUS",
     "morlet_bank_sha256",
     "morlet_formula_bank_diagnostic",
+    "morlet_formula_max_abs_error",
     "morlet_kernel_bank",
     "morlet_length_mask",
 ]

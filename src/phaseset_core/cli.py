@@ -34,6 +34,7 @@ _DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "configs" / "phaseset" /
 _BASE_SYSTEM_IDS = tuple(system_id for system_id, _ in BASE_SYSTEMS)
 _FINAL_SYSTEM_IDS = tuple(system_id for system_id, _ in FINAL_SYSTEMS)
 _RESIDUAL_SYSTEM_IDS = tuple(system_id for system_id in _FINAL_SYSTEM_IDS if system_id != "00")
+_RESUME_SYSTEM_IDS = _BASE_SYSTEM_IDS + _FINAL_SYSTEM_IDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,7 +288,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config(resume)
     resume.add_argument("--attempt-dir", type=Path)
     resume.add_argument("--checkpoint", dest="resume_checkpoint", type=Path)
-    resume.add_argument("--system-id", choices=_FINAL_SYSTEM_IDS)
+    resume.add_argument("--system-id", choices=_RESUME_SYSTEM_IDS)
+    resume.add_argument("--base-checkpoint", type=Path)
+    resume.add_argument("--periodic-cache", type=Path)
 
     return parser
 

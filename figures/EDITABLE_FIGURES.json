@@ -1,0 +1,81 @@
+{
+  "figures": [
+    {
+      "empirical_result": false,
+      "external_relationships": 0,
+      "native_connector_segments": 18,
+      "native_container_headers": 2,
+      "native_edge_labels": 0,
+      "native_node_shapes": 16,
+      "native_shapes": 18,
+      "package_parts": 36,
+      "pptx": "phaseset_motivation.pptx",
+      "pptx_sha256": "4c7ef9150eddd60f9ee75adbd4d17f2755c8144aad796251a0310a6dd545b048",
+      "raster_media": 0,
+      "source": "phaseset_motivation.drawio",
+      "source_edges": 14,
+      "source_sha256": "a0a25fbc8c55575d50c6ffa8d6add01ce780cc8842328bb3f6bba20c6509d18a"
+    },
+    {
+      "empirical_result": false,
+      "external_relationships": 0,
+      "native_connector_segments": 41,
+      "native_container_headers": 2,
+      "native_edge_labels": 3,
+      "native_node_shapes": 26,
+      "native_shapes": 31,
+      "package_parts": 36,
+      "pptx": "phaseset_architecture.pptx",
+      "pptx_sha256": "9793fcafb8dccbd1d19a75ee7cfe23a654ec03bf193d84574a9dcbc38260b046",
+      "raster_media": 0,
+      "source": "phaseset_architecture.drawio",
+      "source_edges": 19,
+      "source_sha256": "1a61a503c935a72cbfbe1ce175ab54bf975eb3e0a2164018aeda80448f472a1a"
+    }
+  ],
+  "package_policy": {
+    "compression": "ZIP_STORED",
+    "create_system": 0,
+    "external_attr": 25165824,
+    "retained_part_count": 36,
+    "timestamp": [
+      1980,
+      1,
+      1,
+      0,
+      0,
+      0
+    ]
+  },
+  "renderer": {
+    "bytes": 33666,
+    "name": "render_editable_figures.py",
+    "sha256": "18babb8ff4042dc091bb426e6679186f7427b3b01695d82e56d4468de2740222"
+  },
+  "runtime": {
+    "libxml2": [
+      2,
+      11,
+      9
+    ],
+    "libxslt": [
+      1,
+      1,
+      45
+    ],
+    "lxml": "6.1.1.0",
+    "machine": "AMD64",
+    "python": "3.12.14",
+    "python_implementation": "CPython",
+    "python_pptx": "1.0.2",
+    "system": "Windows",
+    "zlib_build": "1.3.2",
+    "zlib_runtime": "1.3.2"
+  },
+  "schema": "phaseset-editable-figure-census-v2",
+  "template": {
+    "bytes": 34030,
+    "name": "python-pptx-default.pptx",
+    "sha256": "e10cc9e120961f6bd4074a373c9c80d2a06c497157e8f4972977b7bea83a8f34"
+  }
+}

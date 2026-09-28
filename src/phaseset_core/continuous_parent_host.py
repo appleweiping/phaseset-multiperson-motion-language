@@ -188,6 +188,21 @@ class ParentHostBindings:
 
 
 @dataclass(frozen=True)
+class ParentHostRunIdentity:
+    """Registered row identity persisted in every V2 parent checkpoint."""
+
+    run_id: str
+    system_id: str
+    predecessor_run_id: str | None
+
+    def __post_init__(self):
+        if not self.run_id.startswith("V2-") or not self.system_id:
+            raise ValueError("registered V2 run identity is malformed")
+        if self.predecessor_run_id is not None and not self.predecessor_run_id.startswith("V2-"):
+            raise ValueError("registered V2 predecessor identity is malformed")
+
+
+@dataclass(frozen=True)
 class ParentHostReport:
     outcome: str
     global_step: int
@@ -224,6 +239,8 @@ class ContinuousParentTrainingHost:
         source: ParentTrainingSource,
         config: ParentHostConfig,
         bindings: ParentHostBindings,
+        *,
+        run_identity: ParentHostRunIdentity | None = None,
     ):
         if not isinstance(system, (ContinuousRetrievalSystem, ContinuousBaseRetrievalSystem)):
             raise TypeError("this host requires an actual complete-parent base or V2 scorer")
@@ -232,9 +249,19 @@ class ContinuousParentTrainingHost:
             raise ValueError("host stage does not match the actual scorer")
         if (bindings.frozen_base_checkpoint_sha256 is None) != self._is_base:
             raise ValueError("only a residual stage binds a frozen B2 checkpoint")
-        self._initialize(system, task, source, config, bindings)
+        if run_identity is not None:
+            if type(run_identity) is not ParentHostRunIdentity:
+                raise TypeError("registered run identity must be exact")
+            if self._is_base != (run_identity.predecessor_run_id is None):
+                raise ValueError("registered predecessor does not match host stage")
+            if run_identity.system_id == "A8" and config.cf_weight != 0:
+                raise ValueError("registered A8 host must disable only CF loss")
+            if run_identity.system_id != "A8" and not self._is_base and config.cf_weight <= 0:
+                raise ValueError("registered residual host requires the CF objective")
+        self._run_identity = run_identity
+        self._initialize(system, task, source, config, bindings, run_identity)
 
-    def _initialize(self, system, task, source, config, bindings):
+    def _initialize(self, system, task, source, config, bindings, run_identity):
         """Shared optimizer/checkpoint loop; public constructors admit scorers."""
         if any(parameter.dtype != torch.float32 for parameter in system.parameters()):
             raise ValueError("this host has only been qualified for FP32")
@@ -291,6 +318,8 @@ class ContinuousParentTrainingHost:
             "steps_per_epoch": self._steps_per_epoch,
             "total_steps": self._total_steps,
         }
+        if run_identity is not None:
+            self._manifest["registered_run_identity"] = asdict(run_identity)
         optimizer_type = torch.optim.Adam if config.optimizer == "adam" else torch.optim.AdamW
         self._optimizer = optimizer_type(
             self._parameters, lr=config.learning_rate, weight_decay=config.weight_decay
@@ -686,7 +715,16 @@ class ContinuousParentTrainingHost:
                         "latest_checkpoint_sha256": None
                         if self._latest is None
                         else self._latest.sha256,
+                        "best_checkpoint": None
+                        if self._best is None
+                        else str(self._best.path),
+                        "best_checkpoint_sha256": None
+                        if self._best is None
+                        else self._best.sha256,
                         "best_validation_r1": self._best_value,
+                        "registered_run_identity": None
+                        if self._run_identity is None
+                        else asdict(self._run_identity),
                         "monitor": self._monitor.summary(),
                         "formal_authority": False,
                     },

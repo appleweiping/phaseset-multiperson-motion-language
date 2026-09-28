@@ -92,6 +92,11 @@ The [A3 capacity-matched pair-bag control](docs/PHASESET_V2_A3_PAIR_BAG.md)
 keeps the full head's active node and edge modules but pools relation packets
 without assigning them to actor nodes. It is distinct from the legacy
 topology-off pair-only diagnostic and has no reported retrieval result yet.
+The [matrix-bound V2 mechanism factory](docs/PHASESET_V2_MECHANISM_FACTORY.md)
+constructs the implemented main B2 and full/A2/A3/A4/A5/A6/A8 host paths
+with registered seeds, predecessor/terminal and source bindings. Its 32
+focused CPU checks passed on the registered server; it grants no pilot or
+formal launch, and A1/A7/A9, fold hosts and Inter-X remain held.
 [TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
 complete original VAE objectives with disclosed full-parent group adaptation;
 its pinned frozen language loader is not a substitute for native learning.

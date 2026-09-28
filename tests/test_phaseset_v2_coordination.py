@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 import itertools
 import json
 import os
@@ -310,6 +311,72 @@ def test_group_with_no_derived_support_has_exact_zero_neural_output():
     assert not result.patch_mask.any()
     assert torch.count_nonzero(result.embedding) == 0
     assert not torch.signbit(result.embedding).any()
+
+
+def test_a7_generic_local_uses_actor_kinematics_but_never_physical_relations(monkeypatch):
+    torch.manual_seed(1729)
+    source = field()
+    generic = TemporalIncidenceEncoder(32, generic_local=True, checkpoint_blocks=False)
+    text = torch.randn(2, 32)
+    original = generic.score_text(source, text)
+    # A7 must not depend on Morlet arrays, masks, centers or fitted floors.
+    phase_free = replace(
+        source,
+        responses=(),
+        response_masks=(),
+        response_centers=(),
+        energy_floors=np.full(6, np.inf),
+    )
+
+    def reject_physical(*_args):
+        raise AssertionError("A7 read a physical pair relation")
+
+    monkeypatch.setattr("phaseset_core.temporal_coordination.local_pair_chunk", reject_physical)
+    changed = generic.score_text(phase_free, text)
+    assert torch.equal(original.cosine, changed.cosine)
+    assert torch.equal(original.coordination.embedding, changed.coordination.embedding)
+    assert bool(changed.periodic_support)
+    with pytest.raises(AssertionError, match="physical pair"):
+        TemporalIncidenceEncoder(32, checkpoint_blocks=False)(source)
+
+
+def test_a7_permutation_padding_gradient_and_capacity_contract():
+    torch.manual_seed(2718)
+    generic = TemporalIncidenceEncoder(32, generic_local=True, checkpoint_blocks=False)
+    full = TemporalIncidenceEncoder(32, checkpoint_blocks=False)
+    phase = (0.0, 0.25, 0.75, 1.5)
+    original = generic(field(motion(phase)))
+    permuted = generic(field(motion(phase, order=(3, 1, 0, 2), padding=5)))
+    assert torch.equal(original.embedding, permuted.embedding)
+    assert torch.equal(original.patch_mask, permuted.patch_mask)
+    assert generic.half_edge[0].in_features == 2 * 32 + 3
+    assert full.half_edge[0].in_features == 2 * 32 + 6 * 7 + 3
+    full_count = sum(parameter.numel() for parameter in full.parameters())
+    generic_count = sum(parameter.numel() for parameter in generic.parameters())
+    assert abs(full_count - generic_count) / full_count < 0.05
+    original.embedding.sum().backward()
+    assert generic.half_edge[0].weight.grad is not None
+    assert torch.count_nonzero(generic.half_edge[0].weight.grad) > 0
+
+
+def test_a7_missing_tracks_are_exact_zero_and_k2_topology_stays_gated():
+    torch.manual_seed(31415)
+    generic = TemporalIncidenceEncoder(32, generic_local=True, checkpoint_blocks=False)
+    missing = generic(field(motion(missing=True)))
+    assert not missing.patch_mask.any()
+    assert torch.count_nonzero(missing.embedding) == 0
+    assert not torch.signbit(missing.embedding).any()
+    dyad = field(motion((0.0, 0.3)))
+    paired = copy.deepcopy(generic)
+    paired.use_topology = False
+    group_output, pair_output = generic(dyad), paired(dyad)
+    assert torch.equal(group_output.embedding, pair_output.embedding)
+    assert torch.count_nonzero(group_output.topology_nodes) == 0
+    group_output.embedding.sum().backward()
+    for parameter in generic.node_mlp.parameters():
+        assert parameter.grad is not None and torch.count_nonzero(parameter.grad) == 0
+    with pytest.raises(ValueError, match="A7 must use"):
+        TemporalIncidenceEncoder(32, generic_local=True, use_topology=False)
 
 
 def test_capture_readout_distinguishes_AB_from_BA_and_sorts_storage_order():

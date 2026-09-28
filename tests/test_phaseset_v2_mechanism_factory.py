@@ -121,6 +121,7 @@ def _speed_receipt(*, population: str = "main") -> SpeedFloorReceipt:
         ("V2-031", "A3", "pair_bag", True),
         ("V2-034", "A4", "incidence_shuffle_seed", 1729),
         ("V2-037", "A5", "strip_phase", True),
+        ("V2-043", "A7", "generic_local", True),
         ("V2-046", "A8", "pair_bag", False),
     ),
 )
@@ -177,6 +178,22 @@ def test_a1_binds_independent_speed_floor_and_preserves_residual_capacity(tmp_pa
         _build(tmp_path, "V2-022", selected=selected, speed_floor_receipt=_speed_receipt())
 
 
+def test_a7_preserves_cf_host_and_checkpoint_identity(tmp_path) -> None:
+    selected = _selected(tmp_path)
+    full = _build(tmp_path, "V2-022", selected=selected)
+    a7 = _build(tmp_path, "V2-043", selected=selected)
+    assert a7.counterfactual_objective_enabled
+    assert a7.model.coordination.generic_local
+    assert a7.model.relation_kind == "phase"
+    assert a7.model.periodic_velocity_mode == "signed_vector"
+    config = ParentHostConfig(1729, MAIN_TRAIN, ("C00",), cf_weight=0.2, cf_margin=0.2)
+    assert bind_v2_parent_host_config(a7, config) is config
+    with pytest.raises(ValueError, match="checkpoint resume"):
+        a7.model.set_extra_state(full.model.get_extra_state())
+    with pytest.raises(ValueError, match="checkpoint resume"):
+        full.model.set_extra_state(a7.model.get_extra_state())
+
+
 def test_a8_disables_only_cf_objective_and_preserves_weak_pool_host_contract(tmp_path) -> None:
     selected = _selected(tmp_path)
     full = _build(tmp_path, "V2-022", selected=selected)
@@ -199,7 +216,7 @@ def test_a8_disables_only_cf_objective_and_preserves_weak_pool_host_contract(tmp
 
 def test_unsupported_rows_and_matrix_drift_fail_without_full_model_fallback(tmp_path) -> None:
     selected = _selected(tmp_path)
-    for run_id in ("V2-043", "V2-049", "V2-007"):
+    for run_id in ("V2-049", "V2-007"):
         with pytest.raises(V2MechanismHold, match="not an implemented V2 mechanism"):
             _build(tmp_path, run_id, selected=selected)
     with pytest.raises(V2MechanismHold, match="exact frozen"):

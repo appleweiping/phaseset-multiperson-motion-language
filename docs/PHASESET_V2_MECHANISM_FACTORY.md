@@ -3,8 +3,8 @@
 `build_v2_mechanism` reads the exact registered 87-row matrix bytes and one
 run ID, an admitted training-source digest, and a validation-selected complete-parent
 B2 checkpoint with its exact file digest. It constructs the currently implemented complete-parent residual
-systems only: PhaseSet-V2 full and A1/A2/A3/A4/A5/A6/A8. It verifies the row's
-fixed seed, split and same-seed B2 predecessor, and refuses A7/A9, the old
+systems only: PhaseSet-V2 full and A1/A2/A3/A4/A5/A6/A7/A8. It verifies the row's
+fixed seed, split and same-seed B2 predecessor, and refuses A9, the old
 head, base and literature rows until their distinct implementations exist.
 There is no fallback to the full model for an unsupported system.
 
@@ -17,6 +17,7 @@ There is no fallback to the full model for an unsupported system.
 | A4 | explicit incidence shuffle seeded by the registered training seed |
 | A5 | explicit phase fields stripped; energy/support retained |
 | A6 | true mean/difference-signal DCT with a typed, main-population floor receipt |
+| A7 | signed local actor kinematics and relative pelvis relation, without explicit phase; same CF pool/loss |
 | A8 | full model; `bind_v2_parent_host_config` sets only the CF loss weight to zero |
 
 For main rows, host config binding also checks the exact twelve development
@@ -31,6 +32,8 @@ main population. A1 also requires a speed-only source and checks its receipt
 against the model at host binding; it cannot silently use signed-vector cached
 responses. The periodic transform and its claim boundary are specified in
 [A1 speed control](PHASESET_V2_A1_SPEED_CONTROL.md).
+A7's score does not consume phase responses, but the current common transport
+still loads the phase cache; see [A7 cost boundary](PHASESET_V2_A7_GENERIC_LOCAL.md).
 
 `make_v2_b2_base_host` constructs a main B2 host that writes the registered
 base row identity into its checkpoint manifest. It creates the registered

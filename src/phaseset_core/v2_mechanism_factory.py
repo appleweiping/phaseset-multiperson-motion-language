@@ -41,7 +41,7 @@ class V2MechanismHold(ValueError):
     """A row cannot yet be constructed as its registered scientific system."""
 
 
-_SUPPORTED = frozenset({"PhaseSet-V2", "A1", "A2", "A3", "A4", "A5", "A6", "A8"})
+_SUPPORTED = frozenset({"PhaseSet-V2", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"})
 
 
 def _sha256_key(value: str) -> bool:
@@ -318,6 +318,7 @@ def build_v2_mechanism(
         "pair_bag": system_id == "A3",
         "incidence_shuffle_seed": row["seed"] if system_id == "A4" else None,
         "strip_phase": system_id == "A5",
+        "generic_local": system_id == "A7",
         "relation_kind": "true_mean_difference_dct" if system_id == "A6" else "phase",
         "dct_floor_receipt": dct_floor_receipt,
         "periodic_velocity_mode": "speed_only" if system_id == "A1" else "signed_vector",

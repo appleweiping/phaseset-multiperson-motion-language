@@ -119,6 +119,7 @@ class ContinuousRetrievalSystem(nn.Module):
         incidence_shuffle_seed: int | None = None,
         order_free: bool = False,
         pair_bag: bool = False,
+        generic_local: bool = False,
         periodic_velocity_mode: str = "signed_vector",
         speed_floor_receipt: SpeedFloorReceipt | None = None,
         checkpoint_blocks: bool = True,
@@ -138,6 +139,11 @@ class ContinuousRetrievalSystem(nn.Module):
             raise ValueError("base_edge_budget must be a positive integer")
         if relation_kind not in ("phase", "true_mean_difference_dct"):
             raise ValueError("relation_kind must be phase or true_mean_difference_dct")
+        if type(generic_local) is not bool or (
+            generic_local
+            and (relation_kind != "phase" or periodic_velocity_mode != "signed_vector")
+        ):
+            raise ValueError("A7 requires signed local actor kinematics without DCT or speed controls")
         if periodic_velocity_mode not in VELOCITY_MODES or (
             relation_kind != "phase" and periodic_velocity_mode != "signed_vector"
         ):
@@ -187,6 +193,7 @@ class ContinuousRetrievalSystem(nn.Module):
             incidence_shuffle_seed=incidence_shuffle_seed,
             order_free=order_free,
             pair_bag=pair_bag,
+            generic_local=generic_local,
             checkpoint_blocks=checkpoint_blocks,
         )
         self.text_adapter = nn.Sequential(nn.Linear(512, 512), nn.GELU(), nn.Linear(512, 512))
@@ -210,6 +217,8 @@ class ContinuousRetrievalSystem(nn.Module):
             payload["order_free"] = True
         if self.coordination.pair_bag:
             payload["pair_bag"] = True
+        if self.coordination.generic_local:
+            payload["generic_local"] = True
         if not self.coordination.use_topology:
             payload["use_topology"] = False
         if self.coordination.strip_phase:

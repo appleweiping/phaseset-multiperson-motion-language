@@ -93,10 +93,14 @@ keeps the full head's active node and edge modules but pools relation packets
 without assigning them to actor nodes. It is distinct from the legacy
 topology-off pair-only diagnostic and has no reported retrieval result yet.
 The [matrix-bound V2 mechanism factory](docs/PHASESET_V2_MECHANISM_FACTORY.md)
-constructs the implemented main B2 and full/A2/A3/A4/A5/A6/A8 host paths
-with registered seeds, predecessor/terminal and source bindings. Its 32
-focused CPU checks passed on the registered server; it grants no pilot or
-formal launch, and A1/A7/A9, fold hosts and Inter-X remain held.
+constructs the implemented main B2 and full/A1/A2/A3/A4/A5/A6/A7/A8 host paths
+with registered seeds, predecessor/terminal and source bindings. The A7
+focused registered-server CPU qualification passed 42 tests with one
+CUDA-only skip; it grants no pilot or
+formal launch, and A9, fold hosts and Inter-X remain held. A7 is a
+[generic local relation control](docs/PHASESET_V2_A7_GENERIC_LOCAL.md): its
+scores ignore phase features, while its shared input transport still incurs
+phase-cache preparation cost.
 [TMR-Set](docs/TMR_SET_ADAPTATION.md) now implements the
 complete original VAE objectives with disclosed full-parent group adaptation;
 its pinned frozen language loader is not a substitute for native learning.

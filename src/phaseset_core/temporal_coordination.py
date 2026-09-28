@@ -21,6 +21,7 @@ from .directional_phase import (
     ACTOR_FEATURE_DIM,
     PHASE_FEATURE_DIM,
     DirectionalPhaseField,
+    canonical_edge_pairs,
     local_pair_chunk,
 )
 from .dct_relations import DctRelationField, local_dct_pair_chunk
@@ -206,6 +207,7 @@ class TemporalIncidenceEncoder(nn.Module):
         incidence_shuffle_seed: int | None = None,
         order_free: bool = False,
         pair_bag: bool = False,
+        generic_local: bool = False,
         checkpoint_blocks: bool = True,
     ) -> None:
         super().__init__()
@@ -226,18 +228,30 @@ class TemporalIncidenceEncoder(nn.Module):
             and (not use_topology or strip_phase or incidence_shuffle_seed is not None or order_free)
         ):
             raise ValueError("A3 must pool pair packets in the otherwise full phase system")
+        if type(generic_local) is not bool or (
+            generic_local
+            and (
+                not use_topology
+                or strip_phase
+                or incidence_shuffle_seed is not None
+                or order_free
+                or pair_bag
+            )
+        ):
+            raise ValueError("A7 must use the full temporal-incidence path without physical phase")
         self.width = width
         self.use_topology = use_topology
         self.strip_phase = strip_phase
         self.incidence_shuffle_seed = incidence_shuffle_seed
         self.order_free = order_free
         self.pair_bag = pair_bag
+        self.generic_local = generic_local
         self.checkpoint_blocks = checkpoint_blocks
         temporal_encoder = OrderFreeTemporalEncoder if order_free else MaskedTemporalEncoder
         self.actor_projection = nn.Sequential(nn.Linear(ACTOR_FEATURE_DIM, width), nn.GELU())
         self.actor_temporal = temporal_encoder(width)
         self.half_edge = nn.Sequential(
-            nn.Linear(2 * width + 6 * PHASE_FEATURE_DIM + 3, width),
+            nn.Linear(2 * width + (0 if generic_local else 6 * PHASE_FEATURE_DIM) + 3, width),
             nn.GELU(),
             nn.Linear(width, width),
         )
@@ -256,14 +270,21 @@ class TemporalIncidenceEncoder(nn.Module):
     def _half_edges(
         self, field: RelationField, hidden: Tensor, start: int, stop: int
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
-        chunk = _relation_pair_chunk(field, start, stop)
+        if self.generic_local:
+            if type(field) is not DirectionalPhaseField or field.velocity_mode != "signed_vector":
+                raise TypeError("A7 requires signed local actor kinematics, not a physical relation")
+            pairs = canonical_edge_pairs(field.actor_count, start, stop)
+        else:
+            chunk = _relation_pair_chunk(field, start, stop)
+            pairs = chunk.endpoints
         device = hidden.device
-        endpoints = torch.tensor(chunk.endpoints.copy(), dtype=torch.int64, device=device)
-        forward = torch.tensor(chunk.features.copy(), dtype=hidden.dtype, device=device)
-        reverse = torch.tensor(chunk.reverse_features(), dtype=hidden.dtype, device=device)
-        if self.strip_phase:
-            forward[..., :2] = 0.0
-            reverse[..., :2] = 0.0
+        endpoints = torch.tensor(pairs.copy(), dtype=torch.int64, device=device)
+        if not self.generic_local:
+            forward = torch.tensor(chunk.features.copy(), dtype=hidden.dtype, device=device)
+            reverse = torch.tensor(chunk.reverse_features(), dtype=hidden.dtype, device=device)
+            if self.strip_phase:
+                forward[..., :2] = 0.0
+                reverse[..., :2] = 0.0
         left, right = endpoints[:, 0], endpoints[:, 1]
         roots = torch.tensor(field.root_positions.copy(), dtype=hidden.dtype, device=device)
         root_mask = torch.tensor(field.root_patch_mask.copy(), device=device)
@@ -274,31 +295,22 @@ class TemporalIncidenceEncoder(nn.Module):
             torch.zeros_like(relative_root),
         )
         left_hidden, right_hidden = hidden[left], hidden[right]
+        forward_values = (left_hidden, right_hidden, relative_root) if self.generic_local else (
+            left_hidden, right_hidden, forward.flatten(start_dim=2), relative_root
+        )
+        reverse_values = (right_hidden, left_hidden, -relative_root) if self.generic_local else (
+            right_hidden, left_hidden, reverse.flatten(start_dim=2), -relative_root
+        )
         a = self.half_edge(
-            torch.cat(
-                (
-                    left_hidden,
-                    right_hidden,
-                    forward.flatten(start_dim=2),
-                    relative_root,
-                ),
-                dim=-1,
-            )
+            torch.cat(forward_values, dim=-1)
         )
         b = self.half_edge(
-            torch.cat(
-                (
-                    right_hidden,
-                    left_hidden,
-                    reverse.flatten(start_dim=2),
-                    -relative_root,
-                ),
-                dim=-1,
-            )
+            torch.cat(reverse_values, dim=-1)
         )
-        mask = torch.tensor(chunk.support_mask.any(axis=-1).copy(), device=device)
         actor_mask = torch.tensor(field.actor_patch_mask.copy(), device=device)
-        mask = mask & actor_mask[left] & actor_mask[right]
+        mask = actor_mask[left] & actor_mask[right]
+        if not self.generic_local:
+            mask = mask & torch.tensor(chunk.support_mask.any(axis=-1).copy(), device=device)
         return (
             torch.where(mask[..., None], a, torch.zeros_like(a)),
             torch.where(mask[..., None], b, torch.zeros_like(b)),
@@ -512,12 +524,15 @@ class TemporalIncidenceEncoder(nn.Module):
             (a + self.topology_scale.tanh() * delta_a, b + self.topology_scale.tanh() * delta_b)
         )
         histories, _ = self.edge_temporal(packets, torch.cat((track_support, track_support)))
-        # Zero-energy observations can carry track context but are not reliable
-        # physical evidence. Phase uses Morlet floors; A6 uses its independently
-        # fitted DCT floors. Neither treats mere track coverage as evidence.
-        physical = _relation_pair_chunk(field, start, stop)
-        observable = torch.tensor(physical.phase_mask.any(axis=-1).copy(), device=hidden.device)
-        observable = observable & track_support
+        # A7 is a generic local relation control: track support is evidence,
+        # and neither Morlet response nor energy floor is consulted. Physical
+        # systems retain their independent phase/DCT floor qualification.
+        if self.generic_local:
+            observable = track_support
+        else:
+            physical = _relation_pair_chunk(field, start, stop)
+            observable = torch.tensor(physical.phase_mask.any(axis=-1).copy(), device=hidden.device)
+            observable = observable & track_support
         language_mask = torch.cat((observable, observable))
         similarities = F.normalize(histories, dim=-1) @ text.T
         best = similarities.masked_fill(~language_mask[..., None], -torch.inf).amax(dim=(0, 1))

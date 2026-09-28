@@ -35,10 +35,13 @@ responses. The periodic transform and its claim boundary are specified in
 A7's score does not consume phase responses, but the current common transport
 still loads the phase cache; see [A7 cost boundary](PHASESET_V2_A7_GENERIC_LOCAL.md).
 
-`make_v2_b2_base_host` constructs a main B2 host that writes the registered
-base row identity into its checkpoint manifest. It creates the registered
-SocialTemporal B2 architecture under the row's forked CPU seed and requires
-the 30-epoch registered schedule; a short pilot cannot carry a formal row ID.
+`make_v2_registered_base_host` constructs each of the nine main B0/B1/B2
+qualification hosts from its exact row, including the registered architecture,
+official seed, twelve training components, C00 validation and 30-epoch
+schedule. It writes the system/run identity into the checkpoint manifest and
+does not assign formal launch authority. The prior `make_v2_b2_base_host`
+entry point remains B2-only and delegates to this same checked path; a short
+pilot cannot carry a formal row ID. All nine row/seed combinations are tested.
 The residual builder verifies that row identity, stage, seed, population,
 checkpoint file/state digests, a completed 30-epoch terminal and its final
 validation-selected checkpoint digest, then loads strict B2 weights into the

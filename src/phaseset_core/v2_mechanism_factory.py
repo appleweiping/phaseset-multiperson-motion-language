@@ -138,7 +138,7 @@ def _registered_row(matrix_bytes: bytes, run_id: str) -> tuple[dict, dict]:
     return matrix, row
 
 
-def make_v2_b2_base_host(
+def make_v2_registered_base_host(
     matrix_bytes: bytes,
     run_id: str,
     task: ParentRetrievalTask,
@@ -146,19 +146,20 @@ def make_v2_b2_base_host(
     config: ParentHostConfig,
     bindings: ParentHostBindings,
 ) -> ContinuousParentTrainingHost:
-    """Bind a main B2 base to the registered row before checkpoint creation."""
+    """Bind a main B0/B1/B2 qualification run to its exact matrix row."""
     matrix = _registered_matrix(matrix_bytes)
     row = next((item for item in matrix["runs"] if item["id"] == run_id), None)
     if (
         row is None
-        or row.get("system") != "B2"
+        or row.get("system") not in {"B0", "B1", "B2"}
         or row.get("group") != "internal_base"
         or row.get("split") != "main"
         or row.get("status") != "PLANNED"
+        or row.get("seed") not in OFFICIAL_SEEDS
         or type(config) is not ParentHostConfig
         or type(bindings) is not ParentHostBindings
     ):
-        raise V2MechanismHold("registered main B2 base row and model required")
+        raise V2MechanismHold("registered main B0/B1/B2 base row and model required")
     development = matrix["pilot_and_group_fold_components"]["development"]
     validation = tuple(matrix["primary_split"]["validation_component_labels"])
     train = tuple(component for component in development if component not in validation)
@@ -170,18 +171,34 @@ def make_v2_b2_base_host(
         or config.validation_components != validation
         or bindings.frozen_base_checkpoint_sha256 is not None
     ):
-        raise V2MechanismHold("B2 host population, seed or stage differs from matrix")
+        raise V2MechanismHold("base host population, seed or stage differs from matrix")
     with torch.random.fork_rng(devices=[]):
         torch.random.default_generator.manual_seed(row["seed"])
-        base_model = build_registered_base_training_system("B2")
+        base_model = build_registered_base_training_system(row["system"])
     return ContinuousParentTrainingHost(
         ContinuousBaseRetrievalSystem(base_model),
         task,
         source,
         config,
         bindings,
-        run_identity=ParentHostRunIdentity(run_id, "B2", None),
+        run_identity=ParentHostRunIdentity(run_id, row["system"], None),
     )
+
+
+def make_v2_b2_base_host(
+    matrix_bytes: bytes,
+    run_id: str,
+    task: ParentRetrievalTask,
+    source: ParentTrainingSource,
+    config: ParentHostConfig,
+    bindings: ParentHostBindings,
+) -> ContinuousParentTrainingHost:
+    """Compatibility entry point that continues to admit B2 rows only."""
+    matrix = _registered_matrix(matrix_bytes)
+    row = next((item for item in matrix["runs"] if item["id"] == run_id), None)
+    if row is None or row.get("system") != "B2":
+        raise V2MechanismHold("registered main B2 base row required")
+    return make_v2_registered_base_host(matrix_bytes, run_id, task, source, config, bindings)
 
 
 def build_v2_mechanism(

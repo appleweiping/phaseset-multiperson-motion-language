@@ -27,6 +27,7 @@ from phaseset_core.v2_mechanism_factory import (
     bind_v2_parent_host_config,
     build_v2_mechanism,
     make_v2_b2_base_host,
+    make_v2_registered_base_host,
     make_v2_parent_host,
 )
 MATRIX = (Path(__file__).parents[1] / "configs/phaseset_v2_experiment_matrix.json").read_bytes()
@@ -295,3 +296,47 @@ def test_single_host_entrypoint_binds_a8_and_persists_row_identity(tmp_path) -> 
     assert base_host._manifest["registered_run_identity"] == {
         "run_id": "V2-007", "system_id": "B2", "predecessor_run_id": None,
     }
+
+
+@pytest.mark.parametrize(
+    ("run_id", "system_id", "seed"),
+    tuple(
+        (f"V2-{3 * architecture + offset:03d}", system_id, seed)
+        for architecture, system_id in enumerate(("B0", "B1", "B2"))
+        for offset, seed in enumerate((1729, 2718, 31415), 1)
+    ),
+)
+def test_registered_base_host_covers_all_three_qualification_architectures(
+    run_id: str, system_id: str, seed: int,
+) -> None:
+    rows = tuple(
+        ParentCaptionRecord(
+            hashlib.sha256(f"base-source-{i}".encode()).hexdigest(),
+            hashlib.sha256(f"base-family-{i}".encode()).hexdigest(),
+            component,
+            "validation" if component == "C00" else "train",
+            (f"human row {i}",),
+        )
+        for i, component in enumerate((*MAIN_TRAIN, "C00"))
+    )
+    task = ParentRetrievalTask(
+        rows, expected_family_keys=tuple(row.annotation_family_sha256 for row in rows)
+    )
+    config = ParentHostConfig.for_base(seed, MAIN_TRAIN, ("C00",))
+    bindings = ParentHostBindings("b" * 64, "c" * 64, "d" * 64, None)
+    host = make_v2_registered_base_host(MATRIX, run_id, task, object(), config, bindings)
+    assert host.system.system_id == system_id
+    assert host._manifest["registered_run_identity"] == {
+        "run_id": run_id, "system_id": system_id, "predecessor_run_id": None,
+    }
+    assert host._steps_per_epoch == 1
+    with pytest.raises(V2MechanismHold, match="B2 base row"):
+        make_v2_b2_base_host(MATRIX, "V2-001", task, object(), config, bindings)
+    with pytest.raises(V2MechanismHold, match="seed or stage"):
+        make_v2_registered_base_host(
+            MATRIX, run_id, task, object(),
+            ParentHostConfig.for_base(
+                2718 if seed != 2718 else 31415, MAIN_TRAIN, ("C00",)
+            ),
+            bindings,
+        )

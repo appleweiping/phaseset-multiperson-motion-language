@@ -17,7 +17,7 @@ import numpy as np
 
 from .contracts import PreparedGroupBatch, validate_prepared_group_batch
 from .continuous_capture import PreparedContinuousCapture
-from .morlet import SAMPLE_RATE_HZ, morlet_kernel_bank
+from .morlet import MORLET_FREQUENCIES_HZ, SAMPLE_RATE_HZ, morlet_kernel_bank
 from .periodic import ResourceLimitError, validate_energy_floors
 
 
@@ -399,3 +399,111 @@ def mean_difference_signal_dct(left: np.ndarray, right: np.ndarray) -> tuple[np.
     ) * math.sqrt(2.0 / length)
     basis[0] /= math.sqrt(2.0)
     return basis @ ((left + right) / 2), basis @ (left - right)
+
+
+def true_mean_difference_dct_features(
+    left: np.ndarray,
+    right: np.ndarray,
+    left_mask: np.ndarray,
+    right_mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Six-band phase-free control from the *signals* (a+b)/2 and a-b.
+
+    This is not the legacy independent-self-power control. A shared
+    intersection mask is applied before either DCT so the sum/difference
+    identity and its cross term remain exact for the observed channels.
+    No Morlet phase, imaginary quadrature or directed lag enters the output.
+    The returned support means observed DCT samples, not calibrated phase
+    energy; a training host must not call it a fitted physical floor.
+
+    DCT-II bins are partitioned into six complete positive-frequency bands
+    at geometric midpoints between the frozen Morlet center frequencies.
+    Feature slots: log mean-signal power, log difference-signal power,
+    normalized cross-spectrum, log left power, log right power, common
+    observation coverage, and an observed-channel indicator.
+    """
+    if (
+        type(left) is not np.ndarray
+        or type(right) is not np.ndarray
+        or type(left_mask) is not np.ndarray
+        or type(right_mask) is not np.ndarray
+        or left.ndim != 2
+        or left.shape != right.shape
+        or left.shape != left_mask.shape
+        or left.shape != right_mask.shape
+        or not 2 <= left.shape[0] <= 40
+        or left.shape[1] < 1
+        or left_mask.dtype != np.bool_
+        or right_mask.dtype != np.bool_
+        or left.dtype.kind != "f"
+        or right.dtype.kind != "f"
+        or not np.isfinite(left).all()
+        or not np.isfinite(right).all()
+    ):
+        raise ValueError("DCT control requires finite [T,C] values and matching bool masks")
+    length = left.shape[0]
+    common = left_mask & right_mask
+    eligible = common.sum(axis=0) >= 2
+    features = np.zeros((len(MORLET_FREQUENCIES_HZ), PHASE_FEATURE_DIM), dtype=np.float64)
+    support = np.zeros((len(MORLET_FREQUENCIES_HZ),), dtype=np.bool_)
+    if not bool(eligible.any()):
+        return _readonly(features), _readonly(support)
+
+    # Construct the actual paired signals before any frequency transform.
+    a = np.where(common[:, eligible], left[:, eligible].astype(np.float64), 0.0)
+    b = np.where(common[:, eligible], right[:, eligible].astype(np.float64), 0.0)
+    if not np.isfinite(a).all() or not np.isfinite(b).all():
+        raise ValueError("DCT control endpoint conversion became nonfinite")
+    try:
+        with np.errstate(over="raise", invalid="raise"):
+            mean_signal = (a + b) / 2.0
+            difference_signal = a - b
+    except FloatingPointError as exc:
+        raise ValueError("DCT control paired signal became nonfinite") from exc
+    samples = np.arange(length, dtype=np.float64) + 0.5
+    bins = np.arange(1, length, dtype=np.int64)
+    frequencies = bins * SAMPLE_RATE_HZ / (2 * length)
+    centers = np.asarray(MORLET_FREQUENCIES_HZ, dtype=np.float64)
+    boundaries = np.sqrt(centers[:-1] * centers[1:])
+    band_for_bin = np.searchsorted(boundaries, frequencies, side="right")
+    basis = math.sqrt(2.0 / length) * np.cos(
+        np.pi * bins[:, None] * samples[None, :] / length
+    )
+    mean_dct = basis @ mean_signal
+    difference_dct = basis @ difference_signal
+    left_dct = basis @ a
+    right_dct = basis @ b
+    if not all(
+        np.isfinite(value).all()
+        for value in (mean_dct, difference_dct, left_dct, right_dct)
+    ):
+        raise ValueError("DCT control coefficients became nonfinite")
+    coverage = float(common.sum()) / common.size
+    for band in range(len(MORLET_FREQUENCIES_HZ)):
+        selected = band_for_bin == band
+        if not bool(selected.any()):
+            continue
+        try:
+            with np.errstate(over="raise", invalid="raise"):
+                mean_power = float(np.square(mean_dct[selected]).sum(axis=0).mean())
+                difference_power = float(np.square(difference_dct[selected]).sum(axis=0).mean())
+                left_power = float(np.square(left_dct[selected]).sum(axis=0).mean())
+                right_power = float(np.square(right_dct[selected]).sum(axis=0).mean())
+        except FloatingPointError as exc:
+            raise ValueError("DCT control band energy became nonfinite") from exc
+        total = 4 * mean_power + difference_power
+        cross = (4 * mean_power - difference_power) / total if total > 0 else 0.0
+        features[band] = (
+            math.log1p(mean_power),
+            math.log1p(difference_power),
+            cross,
+            math.log1p(left_power),
+            math.log1p(right_power),
+            coverage,
+            1.0,
+        )
+        support[band] = True
+    features[features == 0.0] = 0.0
+    if not np.isfinite(features).all():
+        raise ValueError("DCT control features became nonfinite")
+    return _readonly(features), _readonly(support)

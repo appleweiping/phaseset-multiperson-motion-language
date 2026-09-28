@@ -28,6 +28,12 @@ This source does not fit them or authorize reusing main-experiment floors in
 a held-out fold. Source, annotation, floor, feature, augmentation-rule and
 runtime identities belong in the private execution inputs.
 
+For A1, the source requires a separate speed-only cache and a typed floor
+receipt. It checks the loaded physical config and floor values against that
+receipt before yielding a view. Shared-yaw recomputation preserves the
+selected speed-only frontend rather than falling back to signed vectors.
+See the [A1 control contract](PHASESET_V2_A1_SPEED_CONTROL.md).
+
 The optional [frozen human CLIP rows](PHASESET_V2_FROZEN_CLIP_ROWS.md) connect
 the base/V2 human-only text interface without loading a tower at training.
 The legacy verified-CF branch still needs real human provenance. Under the

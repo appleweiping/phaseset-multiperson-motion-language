@@ -23,7 +23,8 @@ from .continuous_training_input import (
 )
 from .dct_calibration import DctFloorReceipt
 from .dct_relations import DctViewContext, require_dct_working_budget
-from .directional_phase import LocalPhaseConfig
+from .directional_phase import LocalPhaseConfig, VELOCITY_MODES
+from .speed_calibration import SpeedFloorReceipt
 from .parent_retrieval_task import ParentCaptionRecord, ParentRetrievalTask
 from .parent_clip_rows import ParentHumanClipRows
 from .parent_weak_clip_rows import ParentWeakClipRows
@@ -83,6 +84,8 @@ class DevelopmentParentDiskSource:
         dct_floor_receipt: DctFloorReceipt | None = None,
         human_clip_rows: ParentHumanClipRows | None = None,
         weak_clip_rows: ParentWeakClipRows | None = None,
+        velocity_mode: str = "signed_vector",
+        speed_floor_receipt: SpeedFloorReceipt | None = None,
     ):
         if type(task) is not ParentRetrievalTask or any(
             type(record) is not ParentDiskRecord for record in records
@@ -101,6 +104,20 @@ class DevelopmentParentDiskSource:
             raise TypeError("need the closed frozen TMR/WaMo human feature rows")
         if energy_floors is not None and dct_floor_receipt is not None:
             raise ValueError("phase and A6 floors must not be admitted together")
+        if velocity_mode not in VELOCITY_MODES or (
+            velocity_mode == "speed_only" and energy_floors is None
+        ):
+            raise ValueError("speed-only source requires an independent phase cache and floors")
+        if velocity_mode == "speed_only":
+            if type(speed_floor_receipt) is not SpeedFloorReceipt:
+                raise ValueError("A1 source requires an independent speed floor receipt")
+            speed_floor_receipt.require_config(LocalPhaseConfig())
+            if not np.array_equal(energy_floors, speed_floor_receipt.floors):
+                raise ValueError("A1 source floors differ from its training receipt")
+        elif speed_floor_receipt is not None:
+            raise ValueError("speed floor receipt cannot enter a signed-vector source")
+        self.velocity_mode = velocity_mode
+        self.speed_floor_receipt = speed_floor_receipt
         if dct_floor_receipt is not None:
             if type(dct_floor_receipt) is not DctFloorReceipt:
                 raise TypeError("A6 disk source requires a typed DCT floor receipt")
@@ -195,7 +212,10 @@ class DevelopmentParentDiskSource:
             record.physical_directory,
             cache_record=record.physical_record,
             energy_floors=self.energy_floors,
+            expected_velocity_mode=self.velocity_mode,
         )
+        if self.speed_floor_receipt is not None:
+            self.speed_floor_receipt.require_config(complete.cached_field.config)
         return complete.view(
             yaw_delta=angle,
             allow_shared_yaw=self.yaw_eligibility[parent.annotation_family_sha256],

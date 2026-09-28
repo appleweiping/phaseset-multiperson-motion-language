@@ -14,6 +14,7 @@ import torch
 from phaseset_core.continuous_parent_host import ParentHostBindings, ParentHostConfig
 from phaseset_core.dct_calibration import DCT_FLOOR_SCHEMA, DctFloorReceipt, dct_config_sha256
 from phaseset_core.directional_phase import LocalPhaseConfig
+from phaseset_core.speed_calibration import SPEED_FLOOR_SCHEMA, SpeedFloorReceipt, speed_config_sha256
 from phaseset_core.parent_retrieval_task import ParentCaptionRecord, ParentRetrievalTask
 from phaseset_core.training import (
     _atomic_torch_save,
@@ -101,6 +102,17 @@ def _dct_receipt(*, population: str = "main") -> DctFloorReceipt:
     )
 
 
+def _speed_receipt(*, population: str = "main") -> SpeedFloorReceipt:
+    return SpeedFloorReceipt(
+        SPEED_FLOOR_SCHEMA,
+        population,
+        MAIN_TRAIN,
+        SOURCE_SHA,
+        speed_config_sha256(LocalPhaseConfig()),
+        np.ones(6, dtype=np.float64),
+    )
+
+
 @pytest.mark.parametrize(
     ("run_id", "system_id", "attribute", "expected"),
     (
@@ -144,6 +156,27 @@ def test_a6_requires_exact_population_and_uses_only_dct_relations(tmp_path) -> N
         _build(tmp_path, "V2-031", selected=selected, dct_floor_receipt=_dct_receipt())
 
 
+def test_a1_binds_independent_speed_floor_and_preserves_residual_capacity(tmp_path) -> None:
+    selected = _selected(tmp_path)
+    with pytest.raises(V2MechanismHold, match="typed"):
+        _build(tmp_path, "V2-025", selected=selected)
+    with pytest.raises(ValueError, match="population"):
+        _build(tmp_path, "V2-025", selected=selected, speed_floor_receipt=_speed_receipt(population="pilot"))
+    with pytest.raises(V2MechanismHold, match="floor source"):
+        _build(tmp_path, "V2-025", selected=selected, source_sha="b" * 64, speed_floor_receipt=_speed_receipt())
+    full = _build(tmp_path, "V2-022", selected=selected)
+    a1 = _build(tmp_path, "V2-025", selected=selected, speed_floor_receipt=_speed_receipt())
+    assert a1.system_id == "A1" and a1.model.periodic_velocity_mode == "speed_only"
+    assert a1.model.relation_kind == "phase" and a1.counterfactual_objective_enabled
+    assert sum(p.numel() for p in full.model.parameters() if p.requires_grad) == sum(
+        p.numel() for p in a1.model.parameters() if p.requires_grad
+    )
+    with pytest.raises(ValueError, match="checkpoint resume"):
+        a1.model.set_extra_state(full.model.get_extra_state())
+    with pytest.raises(V2MechanismHold, match="only enter A1"):
+        _build(tmp_path, "V2-022", selected=selected, speed_floor_receipt=_speed_receipt())
+
+
 def test_a8_disables_only_cf_objective_and_preserves_weak_pool_host_contract(tmp_path) -> None:
     selected = _selected(tmp_path)
     full = _build(tmp_path, "V2-022", selected=selected)
@@ -166,7 +199,7 @@ def test_a8_disables_only_cf_objective_and_preserves_weak_pool_host_contract(tmp
 
 def test_unsupported_rows_and_matrix_drift_fail_without_full_model_fallback(tmp_path) -> None:
     selected = _selected(tmp_path)
-    for run_id in ("V2-025", "V2-043", "V2-049", "V2-007"):
+    for run_id in ("V2-043", "V2-049", "V2-007"):
         with pytest.raises(V2MechanismHold, match="not an implemented V2 mechanism"):
             _build(tmp_path, run_id, selected=selected)
     with pytest.raises(V2MechanismHold, match="exact frozen"):

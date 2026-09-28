@@ -23,6 +23,7 @@ from .periodic import ResourceLimitError, validate_energy_floors
 
 PHASE_FEATURE_DIM = 7
 ACTOR_FEATURE_DIM = 132
+VELOCITY_MODES = frozenset({"signed_vector", "speed_only"})
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ class DirectionalPhaseField:
     response_masks: tuple[np.ndarray, ...]  # six [K,N_b,22,3] masks
     response_centers: tuple[np.ndarray, ...]
     intervals: tuple[tuple[int, int], ...]
-    actor_features: np.ndarray  # [K,P,132], signed mean and per-channel RMS
+    actor_features: np.ndarray  # [K,P,132], selected-frontend mean and per-channel RMS
     actor_patch_mask: np.ndarray  # [K,P]
     root_positions: np.ndarray  # [K,P,3]
     root_patch_mask: np.ndarray  # [K,P]
@@ -65,6 +66,11 @@ class DirectionalPhaseField:
     source_sha256: str | None = None
     actor_commitments: tuple[bytes, ...] | None = None
     physical_view_sha256: str | None = None
+    velocity_mode: str = "signed_vector"
+
+    def __post_init__(self) -> None:
+        if self.velocity_mode not in VELOCITY_MODES:
+            raise ValueError("unknown periodic velocity frontend")
 
     @property
     def actor_count(self) -> int:
@@ -109,6 +115,19 @@ def signed_joint_velocity(batch: PreparedGroupBatch) -> tuple[np.ndarray, np.nda
     )
 
 
+def speed_only_joint_velocity(batch: PreparedGroupBatch) -> tuple[np.ndarray, np.ndarray]:
+    """Remove vector direction before Morlet while preserving per-frame L2 energy."""
+    signed, mask = signed_joint_velocity(batch)
+    return _speed_only_arrays(signed), mask
+
+
+def _speed_only_arrays(signed: np.ndarray) -> np.ndarray:
+    speed = np.linalg.norm(signed, axis=-1) / math.sqrt(3.0)
+    values = np.broadcast_to(speed[..., None], signed.shape).copy()
+    values[values == 0.0] = 0.0
+    return _readonly(values)
+
+
 def _signed_velocity_arrays(
     skeletons: np.ndarray,
     track_mask: np.ndarray,
@@ -145,6 +164,7 @@ def directional_phase_fields(
     *,
     energy_floors: np.ndarray,
     config: LocalPhaseConfig = LocalPhaseConfig(),
+    velocity_mode: str = "signed_vector",
 ) -> tuple[DirectionalPhaseField, ...]:
     """Compute each actor/band once, preserving the unchanged physical kernels.
 
@@ -162,6 +182,7 @@ def directional_phase_fields(
         checked.valid_lengths,
         floors,
         config,
+        velocity_mode=velocity_mode,
     )
 
 
@@ -170,6 +191,7 @@ def continuous_directional_phase_field(
     *,
     energy_floors: np.ndarray,
     config: LocalPhaseConfig = LocalPhaseConfig(),
+    velocity_mode: str = "signed_vector",
 ) -> DirectionalPhaseField:
     """Analyze a whole capture without the legacy short-window time limit.
 
@@ -189,6 +211,7 @@ def continuous_directional_phase_field(
         (capture.frame_count,),
         floors,
         config,
+        velocity_mode=velocity_mode,
     )[0]
     return replace(
         field,
@@ -208,7 +231,11 @@ def _directional_fields_from_arrays(
     floors: np.ndarray,
     config: LocalPhaseConfig,
     response_directory: Path | None = None,
+    *,
+    velocity_mode: str = "signed_vector",
 ) -> tuple[DirectionalPhaseField, ...]:
+    if velocity_mode not in VELOCITY_MODES:
+        raise ValueError("unknown periodic velocity frontend")
     required_edges = sum(count * (count - 1) // 2 for count in actor_counts)
     if required_edges > config.edge_budget:
         raise ResourceLimitError(required_edges=required_edges, edge_budget=config.edge_budget)
@@ -222,6 +249,8 @@ def _directional_fields_from_arrays(
     if response_directory is None and projected > config.max_response_bytes:
         raise MemoryError("RESOURCE_LIMIT: actor Morlet responses exceed the byte budget")
     signed, signed_mask = _signed_velocity_arrays(skeletons, track_mask, frame_mask, actor_mask)
+    if velocity_mode == "speed_only":
+        signed = _speed_only_arrays(signed)
     results = []
     for row, (count, length) in enumerate(zip(actor_counts, valid_lengths, strict=True)):
         values = signed[row, :count, :length].reshape(count, length, 66)
@@ -306,6 +335,7 @@ def _directional_fields_from_arrays(
                 _readonly(root_mask),
                 floors,
                 config,
+                velocity_mode=velocity_mode,
             )
         )
     return tuple(results)

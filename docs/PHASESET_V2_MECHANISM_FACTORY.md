@@ -3,14 +3,15 @@
 `build_v2_mechanism` reads the exact registered 87-row matrix bytes and one
 run ID, an admitted training-source digest, and a validation-selected complete-parent
 B2 checkpoint with its exact file digest. It constructs the currently implemented complete-parent residual
-systems only: PhaseSet-V2 full and A2/A3/A4/A5/A6/A8. It verifies the row's
-fixed seed, split and same-seed B2 predecessor, and refuses A1/A7/A9, the old
+systems only: PhaseSet-V2 full and A1/A2/A3/A4/A5/A6/A8. It verifies the row's
+fixed seed, split and same-seed B2 predecessor, and refuses A7/A9, the old
 head, base and literature rows until their distinct implementations exist.
 There is no fallback to the full model for an unsupported system.
 
 | Row | Constructor difference |
 |---|---|
 | PhaseSet-V2 | full signed-vector phase and incidence model |
+| A1 | speed-magnitude input before the same six Morlet convolutions, with an independent typed training-floor receipt and physical cache |
 | A2 | order-free temporal MLP/mean paths |
 | A3 | capacity-matched pair-bag context |
 | A4 | explicit incidence shuffle seeded by the registered training seed |
@@ -24,9 +25,12 @@ derived from the same nonzero-CF candidate, changing only its loss weight;
 the caller must still present the same admitted weak training text pool as
 full. Residual initialization uses a forked CPU RNG seeded by the registered
 row, so same-seed full/A8 begin from the same trainable weights without
-mutating the caller's RNG. The A6 receipt must match the admitted
-training-source manifest digest in addition to its physical config and
-main population.
+mutating the caller's RNG. The A1/A6 receipts must match the admitted
+training-source manifest digest in addition to their physical config and
+main population. A1 also requires a speed-only source and checks its receipt
+against the model at host binding; it cannot silently use signed-vector cached
+responses. The periodic transform and its claim boundary are specified in
+[A1 speed control](PHASESET_V2_A1_SPEED_CONTROL.md).
 
 `make_v2_b2_base_host` constructs a main B2 host that writes the registered
 base row identity into its checkpoint manifest. It creates the registered

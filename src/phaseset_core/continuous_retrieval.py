@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 
+import numpy as np
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -19,7 +20,8 @@ from .capture_validation import _validate_text_batch
 from .continuous_training_input import ContinuousTrainingView
 from .dct_calibration import DctFloorReceipt
 from .dct_relations import DctRelationField, DctViewContext, require_dct_working_budget
-from .directional_phase import DirectionalPhaseField
+from .directional_phase import DirectionalPhaseField, LocalPhaseConfig, VELOCITY_MODES
+from .speed_calibration import SpeedFloorReceipt
 from .frozen_clip_text import FrozenClipTextBatch
 from .pipeline import collate_group_samples, edge_budget_batches
 from .temporal_coordination import (
@@ -117,6 +119,8 @@ class ContinuousRetrievalSystem(nn.Module):
         incidence_shuffle_seed: int | None = None,
         order_free: bool = False,
         pair_bag: bool = False,
+        periodic_velocity_mode: str = "signed_vector",
+        speed_floor_receipt: SpeedFloorReceipt | None = None,
         checkpoint_blocks: bool = True,
         base_window_batch_size: int = 1,
         base_edge_budget: int = 32768,
@@ -134,6 +138,23 @@ class ContinuousRetrievalSystem(nn.Module):
             raise ValueError("base_edge_budget must be a positive integer")
         if relation_kind not in ("phase", "true_mean_difference_dct"):
             raise ValueError("relation_kind must be phase or true_mean_difference_dct")
+        if periodic_velocity_mode not in VELOCITY_MODES or (
+            relation_kind != "phase" and periodic_velocity_mode != "signed_vector"
+        ):
+            raise ValueError("speed-only frontend is a distinct Morlet phase control")
+        if periodic_velocity_mode == "speed_only":
+            if type(speed_floor_receipt) is not SpeedFloorReceipt:
+                raise ValueError("A1 requires its independent training-only speed floor receipt")
+            speed_floor_receipt.require_config(LocalPhaseConfig())
+            self.register_buffer("speed_energy_floors", torch.from_numpy(speed_floor_receipt.floors.copy()))
+            self._speed_floor_receipt = speed_floor_receipt
+            self._speed_receipt_sha256 = speed_floor_receipt.sha256
+        else:
+            if speed_floor_receipt is not None:
+                raise ValueError("speed floor receipt must not enter another periodic system")
+            self.register_buffer("speed_energy_floors", None)
+            self._speed_floor_receipt = None
+            self._speed_receipt_sha256 = None
         if relation_kind != "phase" and incidence_shuffle_seed is not None:
             raise ValueError("A4 incidence shuffle is a separate phase control, not A6")
         if relation_kind != "phase" and order_free:
@@ -157,6 +178,7 @@ class ContinuousRetrievalSystem(nn.Module):
             self._dct_floor_receipt = dct_floor_receipt
             self._dct_receipt_sha256 = dct_floor_receipt.sha256
         self.relation_kind = relation_kind
+        self.periodic_velocity_mode = periodic_velocity_mode
         self.frozen_b2 = frozen_b2.requires_grad_(False).eval()
         self.coordination = TemporalIncidenceEncoder(
             width=512,
@@ -179,6 +201,9 @@ class ContinuousRetrievalSystem(nn.Module):
             "relation_kind": self.relation_kind,
             "dct_floor_receipt_sha256": self._dct_receipt_sha256,
         }
+        if self.periodic_velocity_mode != "signed_vector":
+            payload["periodic_velocity_mode"] = self.periodic_velocity_mode
+            payload["speed_floor_receipt_sha256"] = self._speed_receipt_sha256
         if self.coordination.incidence_shuffle_seed is not None:
             payload["incidence_shuffle_seed"] = self.coordination.incidence_shuffle_seed
         if self.coordination.order_free:
@@ -199,8 +224,9 @@ class ContinuousRetrievalSystem(nn.Module):
             or state.ndim != 1
             or not torch.equal(state.detach().cpu(), self.get_extra_state())
         ):
-            raise ValueError("relation kind or DCT floor receipt changed across checkpoint resume")
+            raise ValueError("relation identity or floor receipt changed across checkpoint resume")
         self._check_dct_floor_binding()
+        self._check_speed_floor_binding()
 
     def _check_dct_floor_binding(self) -> None:
         if self.relation_kind == "phase":
@@ -213,6 +239,22 @@ class ContinuousRetrievalSystem(nn.Module):
             )
         ):
             raise ValueError("DCT calibration buffer or receipt changed after construction")
+
+    def _check_speed_floor_binding(self, field: DirectionalPhaseField | None = None) -> None:
+        if self.periodic_velocity_mode != "speed_only":
+            return
+        if (
+            self._speed_floor_receipt.sha256 != self._speed_receipt_sha256
+            or not torch.equal(
+                self.speed_energy_floors.detach().cpu(),
+                torch.from_numpy(self._speed_floor_receipt.floors.copy()),
+            )
+        ):
+            raise ValueError("A1 speed calibration buffer or receipt changed")
+        if field is not None:
+            self._speed_floor_receipt.require_config(field.config)
+            if not np.array_equal(field.energy_floors, self._speed_floor_receipt.floors):
+                raise ValueError("A1 view floors differ from the model receipt")
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -257,6 +299,7 @@ class ContinuousRetrievalSystem(nn.Module):
             raise ValueError("views must be a nonempty tuple of admitted continuous inputs")
         text, _, receipt_sha = _validate_text_batch(text_batch, allow_row_selection=True)
         self._check_dct_floor_binding()
+        self._check_speed_floor_binding()
         device = next(self.coordination.parameters()).device
         keys = tuple(view.positive_capture_key for view in views)
         text = text.to(device)
@@ -279,6 +322,10 @@ class ContinuousRetrievalSystem(nn.Module):
             if self.relation_kind == "phase":
                 if type(view.phase_field) is not DirectionalPhaseField:
                     raise ValueError("phase retrieval requires the complete Morlet field")
+                if view.phase_field.velocity_mode != self.periodic_velocity_mode:
+                    raise ValueError("periodic velocity frontend differs from the registered model")
+                if self.periodic_velocity_mode == "speed_only":
+                    self._check_speed_floor_binding(view.phase_field)
                 physical = view.phase_field
             else:
                 physical = DctRelationField.from_capture(

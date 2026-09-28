@@ -25,6 +25,7 @@ from .continuous_parent_host import (
 from .continuous_base_retrieval import ContinuousBaseRetrievalSystem
 from .continuous_retrieval import ContinuousRetrievalSystem
 from .dct_calibration import DctFloorReceipt
+from .speed_calibration import SpeedFloorReceipt
 from .directional_phase import LocalPhaseConfig
 from .study_storage import V2_MATRIX_SHA256
 from .parent_retrieval_task import ParentRetrievalTask
@@ -40,7 +41,7 @@ class V2MechanismHold(ValueError):
     """A row cannot yet be constructed as its registered scientific system."""
 
 
-_SUPPORTED = frozenset({"PhaseSet-V2", "A2", "A3", "A4", "A5", "A6", "A8"})
+_SUPPORTED = frozenset({"PhaseSet-V2", "A1", "A2", "A3", "A4", "A5", "A6", "A8"})
 
 
 def _sha256_key(value: str) -> bool:
@@ -190,6 +191,7 @@ def build_v2_mechanism(
     selected_b2: V2SelectedB2Checkpoint,
     training_source_manifest_sha256: str,
     dct_floor_receipt: DctFloorReceipt | None = None,
+    speed_floor_receipt: SpeedFloorReceipt | None = None,
     checkpoint_blocks: bool = True,
 ) -> V2MechanismBuild:
     """Construct the exact implemented mechanism, never a launch decision."""
@@ -275,6 +277,10 @@ def build_v2_mechanism(
         raise V2MechanismHold("a DCT floor receipt may only enter A6")
     if system_id == "A6" and type(dct_floor_receipt) is not DctFloorReceipt:
         raise V2MechanismHold("A6 requires its typed training-only DCT floor receipt")
+    if system_id != "A1" and speed_floor_receipt is not None:
+        raise V2MechanismHold("a speed floor receipt may only enter A1")
+    if system_id == "A1" and type(speed_floor_receipt) is not SpeedFloorReceipt:
+        raise V2MechanismHold("A1 requires its typed training-only speed floor receipt")
     if type(checkpoint_blocks) is not bool:
         raise V2MechanismHold("checkpointing choice must be explicit boolean")
     training_components = validation_components = None
@@ -302,6 +308,11 @@ def build_v2_mechanism(
         dct_floor_receipt.require_population("main", training_components)
         if dct_floor_receipt.training_source_manifest_sha256 != training_source_manifest_sha256:
             raise V2MechanismHold("A6 floor source differs from admitted training source")
+    if system_id == "A1":
+        speed_floor_receipt.require_config(LocalPhaseConfig())
+        speed_floor_receipt.require_population("main", training_components)
+        if speed_floor_receipt.training_source_manifest_sha256 != training_source_manifest_sha256:
+            raise V2MechanismHold("A1 floor source differs from admitted training source")
     kwargs = {
         "order_free": system_id == "A2",
         "pair_bag": system_id == "A3",
@@ -309,6 +320,8 @@ def build_v2_mechanism(
         "strip_phase": system_id == "A5",
         "relation_kind": "true_mean_difference_dct" if system_id == "A6" else "phase",
         "dct_floor_receipt": dct_floor_receipt,
+        "periodic_velocity_mode": "speed_only" if system_id == "A1" else "signed_vector",
+        "speed_floor_receipt": speed_floor_receipt,
         "checkpoint_blocks": checkpoint_blocks,
     }
     # The host seeds inside fit, which is too late for model initialization.
@@ -378,6 +391,12 @@ def make_v2_parent_host(
     ):
         raise V2MechanismHold("host checkpoint or admitted training source differs from build")
     bound_config = bind_v2_parent_host_config(build, config)
+    if build.system_id == "A1" and (
+        getattr(source, "velocity_mode", None) != "speed_only"
+        or getattr(getattr(source, "speed_floor_receipt", None), "sha256", None)
+        != build.model._speed_receipt_sha256
+    ):
+        raise V2MechanismHold("A1 host requires the registered speed-only source and floor receipt")
     identity = ParentHostRunIdentity(
         build.run_id, build.system_id, build.predecessor_run_id
     )

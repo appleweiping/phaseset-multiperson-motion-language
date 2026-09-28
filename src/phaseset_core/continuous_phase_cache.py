@@ -20,6 +20,7 @@ from .directional_phase import (
     ACTOR_FEATURE_DIM,
     DirectionalPhaseField,
     LocalPhaseConfig,
+    VELOCITY_MODES,
     _directional_fields_from_arrays,
 )
 from .morlet import morlet_kernel_bank
@@ -27,6 +28,13 @@ from .periodic import validate_energy_floors
 
 
 CACHE_SCHEMA = "phaseset-continuous-signed-response-cache-v1"
+SPEED_CACHE_SCHEMA = "phaseset-continuous-speed-response-cache-v1"
+
+
+def _cache_schema(velocity_mode: str) -> str:
+    if velocity_mode not in VELOCITY_MODES:
+        raise ValueError("unknown periodic velocity frontend")
+    return CACHE_SCHEMA if velocity_mode == "signed_vector" else SPEED_CACHE_SCHEMA
 
 
 def write_continuous_phase_cache(
@@ -35,6 +43,7 @@ def write_continuous_phase_cache(
     *,
     config: LocalPhaseConfig = LocalPhaseConfig(),
     max_disk_bytes: int = 16 * 2**30,
+    velocity_mode: str = "signed_vector",
 ) -> DirectionalPhaseField:
     """Write a fresh private physical cache; zero floors are collection-only.
 
@@ -46,6 +55,7 @@ def write_continuous_phase_cache(
         raise TypeError("capture must be exactly PreparedContinuousCapture")
     if type(max_disk_bytes) is not int or max_disk_bytes < 1:
         raise ValueError("disk byte budget must be a positive integer")
+    schema = _cache_schema(velocity_mode)
     destination = Path(directory)
     if destination.exists():
         raise FileExistsError("a physical cache must not overwrite an existing attempt")
@@ -74,6 +84,7 @@ def write_continuous_phase_cache(
         validate_energy_floors(np.zeros(6, dtype=np.float64)),
         config,
         response_directory=destination,
+        velocity_mode=velocity_mode,
     )[0]
     small_arrays = {
         "actor-features": field.actor_features,
@@ -93,7 +104,7 @@ def write_continuous_phase_cache(
         with (destination / f"{name}.npy").open("xb") as stream:
             np.save(stream, value, allow_pickle=False)
     metadata = {
-        "schema": CACHE_SCHEMA,
+        "schema": schema,
         "source_sha256": capture.source_sha256,
         "actor_count": capture.actor_count,
         "frame_count": capture.frame_count,
@@ -117,6 +128,7 @@ def load_continuous_phase_cache(
     *,
     expected_source_sha256: str,
     energy_floors: np.ndarray,
+    expected_velocity_mode: str = "signed_vector",
 ) -> DirectionalPhaseField:
     """Read-only maps with declared capture lineage and explicit fitted floors.
 
@@ -126,7 +138,10 @@ def load_continuous_phase_cache(
     """
     root = Path(directory)
     metadata = json.loads((root / "metadata.json").read_text(encoding="utf-8"))
-    if metadata["schema"] != CACHE_SCHEMA or metadata["source_sha256"] != expected_source_sha256:
+    if (
+        metadata["schema"] != _cache_schema(expected_velocity_mode)
+        or metadata["source_sha256"] != expected_source_sha256
+    ):
         raise ValueError("physical cache schema or capture source lineage differs")
     config = LocalPhaseConfig(**metadata["config"])
     intervals = tuple(tuple(row) for row in metadata["intervals"])
@@ -165,4 +180,5 @@ def load_continuous_phase_cache(
         validate_energy_floors(energy_floors),
         config,
         source_sha256=metadata["source_sha256"],
+        velocity_mode=expected_velocity_mode,
     )

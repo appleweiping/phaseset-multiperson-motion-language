@@ -13,12 +13,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .directional_phase import DirectionalPhaseField
+from .directional_phase import DirectionalPhaseField, LocalPhaseConfig
 from .periodic import validate_energy_floors
 
 
 SEALED_EMBODY_COMPONENTS = frozenset(("C09", "C11", "C15"))
 CALIBRATION_METHOD = "signed-vector-actor-patch-power/linear-fifth-percentile-v1"
+SPEED_CALIBRATION_METHOD = "speed-only-actor-patch-power/linear-fifth-percentile-v1"
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class DirectionalEnergyCalibration:
     missing_counts: tuple[int, ...]
     exact_zero_counts: tuple[int, ...]
     method: str = CALIBRATION_METHOD
+    config: LocalPhaseConfig = LocalPhaseConfig()
 
 
 def actor_patch_power_observations(
@@ -120,6 +122,8 @@ def fit_directional_energy_floors(
     missing = np.zeros(6, dtype=np.int64)
     total = 0
     observed_components: set[str] = set()
+    velocity_mode: str | None = None
+    physical_config: LocalPhaseConfig | None = None
     for capture in captures:
         # Admission precedes physical collection, including for validation rows.
         if capture.component not in allowed:
@@ -127,6 +131,14 @@ def fit_directional_energy_floors(
         if capture.capture_id not in expected or capture.capture_id in seen:
             raise ValueError("calibration capture is unexpected or repeated")
         field = capture.field
+        if velocity_mode is None:
+            velocity_mode = field.velocity_mode
+        elif field.velocity_mode != velocity_mode:
+            raise ValueError("training calibration may not mix periodic velocity frontends")
+        if physical_config is None:
+            physical_config = field.config
+        elif field.config != physical_config:
+            raise ValueError("training calibration may not mix physical configurations")
         total += field.actor_count * field.patch_count
         if total > max_actor_patch_observations:
             raise MemoryError("RESOURCE_LIMIT: complete actor-patch population exceeds budget")
@@ -144,11 +156,14 @@ def fit_directional_energy_floors(
         np.array([_linear_fifth_percentile(row) for row in values], dtype=np.float64)
     ).copy()
     floors.setflags(write=False)
+    assert physical_config is not None
     return DirectionalEnergyCalibration(
-        floors,
-        len(seen),
-        tuple(sorted(allowed)),
-        tuple(int(row.size) for row in values),
-        tuple(int(count) for count in missing),
-        tuple(int(np.count_nonzero(row == 0.0)) for row in values),
+        energy_floors=floors,
+        capture_count=len(seen),
+        training_components=tuple(sorted(allowed)),
+        observed_counts=tuple(int(row.size) for row in values),
+        missing_counts=tuple(int(count) for count in missing),
+        exact_zero_counts=tuple(int(np.count_nonzero(row == 0.0)) for row in values),
+        method=CALIBRATION_METHOD if velocity_mode == "signed_vector" else SPEED_CALIBRATION_METHOD,
+        config=physical_config,
     )

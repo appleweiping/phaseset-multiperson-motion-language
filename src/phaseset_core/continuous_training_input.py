@@ -97,6 +97,7 @@ class ContinuousTrainingInput:
         *,
         cache_record: dict[str, Any],
         energy_floors: np.ndarray,
+        expected_velocity_mode: str = "signed_vector",
     ) -> ContinuousTrainingInput:
         prepared_record = cache_record["prepared_record"]
         if prepared_record["augmentation_yaw"] != 0.0:
@@ -128,7 +129,10 @@ class ContinuousTrainingInput:
         if metadata["frame_count"] != capture.frame_count:
             raise ValueError("physical cache timeline differs from prepared body22")
         field = load_continuous_phase_cache(
-            root, expected_source_sha256=capture.source_sha256, energy_floors=energy_floors
+            root,
+            expected_source_sha256=capture.source_sha256,
+            energy_floors=energy_floors,
+            expected_velocity_mode=expected_velocity_mode,
         )
         if field.actor_count != capture.actor_count or field.patch_count != cache_record["patches"]:
             raise ValueError("physical cache actor/patch census differs")
@@ -166,6 +170,9 @@ class ContinuousTrainingInput:
         # No zero-yaw features or approximate RMS/complex rotations are reused.
         # The existing RAM/edge gates explicitly reject oversized full captures.
         field = continuous_directional_phase_field(
-            rotated, energy_floors=self.cached_field.energy_floors, config=selected_config
+            rotated,
+            energy_floors=self.cached_field.energy_floors,
+            config=selected_config,
+            velocity_mode=self.cached_field.velocity_mode,
         )
         return ContinuousTrainingView(rotated, field, False)

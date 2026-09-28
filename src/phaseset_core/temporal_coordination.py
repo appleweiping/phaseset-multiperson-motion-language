@@ -25,7 +25,7 @@ from .directional_phase import (
     local_pair_chunk,
 )
 from .dct_relations import DctRelationField, local_dct_pair_chunk
-from .objectives import variable_positive_symmetric_infonce
+from .objectives import TextBandMLP, band_text_scores, variable_positive_symmetric_infonce
 
 
 RelationField = DirectionalPhaseField | DctRelationField
@@ -651,6 +651,65 @@ class CalibratedCoordinationScore(nn.Module):
             alpha = torch.where(coordination_support, alpha, torch.zeros_like(alpha))
         scale = self.log_scale.clamp(math.log(1e-3), math.log(100)).exp()
         return scale * ((1 - alpha) * global_cosine + alpha * coordination_cosine)
+
+
+@dataclass(frozen=True)
+class LegacyCalibratedScoreOutput:
+    """A9 score-only output; it does not certify a complete-capture old host."""
+
+    scores: Tensor
+    global_cosine: Tensor
+    legacy_relation_cosine: Tensor
+    text_band_embeddings: Tensor
+    periodic_support: Tensor
+
+
+class LegacyPhaseSetCalibratedHead(nn.Module):
+    """Keep the v0.2 six-token/text representation, change only score scale.
+
+    The old head adds a learned periodic residual to temperature-scaled base
+    logits. A9 instead feeds the *same* band cosine and the frozen B2 cosine
+    into the V2 common-scale calibration. No phase, topology, text projector,
+    or token representation is changed here. The complete-capture host and
+    registered A9 run identity remain separate execution gates.
+    """
+
+    def __init__(self, embedding_dim: int = 512) -> None:
+        super().__init__()
+        self.text_band_mlp = TextBandMLP(embedding_dim)
+        self.calibration = CalibratedCoordinationScore()
+
+    def forward(
+        self,
+        group_tokens: Tensor,
+        band_mask: Tensor,
+        text_embeddings: Tensor,
+        frozen_base_cosine: Tensor,
+    ) -> LegacyCalibratedScoreOutput:
+        text_bands = self.text_band_mlp(text_embeddings)
+        relation_cosine = band_text_scores(group_tokens, band_mask, text_bands)
+        if (
+            type(frozen_base_cosine) is not Tensor
+            or frozen_base_cosine.dtype != torch.float32
+            or frozen_base_cosine.shape != relation_cosine.shape
+            or frozen_base_cosine.device != relation_cosine.device
+            or not frozen_base_cosine.is_contiguous()
+            or frozen_base_cosine.requires_grad
+        ):
+            raise ValueError("A9 needs frozen contiguous base cosines [B,Q], not logits")
+        support = band_mask.any(dim=1).contiguous()
+        scores = self.calibration(
+            frozen_base_cosine,
+            relation_cosine,
+            coordination_support=support,
+        )
+        return LegacyCalibratedScoreOutput(
+            scores.contiguous(),
+            frozen_base_cosine,
+            relation_cosine,
+            text_bands,
+            support,
+        )
 
 
 def complete_relation_text_scores(
